@@ -56,7 +56,7 @@ class SSHClient (object):
 
     .. versionadded:: 1.6
     """
-
+    Transport = Transport
     def __init__(self):
         """
         Create a new SSHClient.
@@ -235,7 +235,7 @@ class SSHClient (object):
                     pass
             retry_on_signal(lambda: sock.connect(addr))
 
-        t = self._transport = Transport(sock)
+        t = self._transport = self.Transport(sock)
         t.use_compression(compress=compress)
         if self._log_channel is not None:
             t.set_log_channel(self._log_channel)
