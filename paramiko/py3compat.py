@@ -7,6 +7,11 @@ __all__ = ['PY2', 'string_types', 'integer_types', 'text_type', 'bytes_types', '
 
 PY2 = sys.version_info[0] < 3
 
+_PY2_RERAISE_STR ="""
+    def raise_saved(exc_type, exc_value, exc_traceback):
+        raise exc_type, exc_value, exc_traceback
+"""
+
 if PY2:
     string_types = basestring
     text_type = unicode
@@ -95,7 +100,19 @@ if PY2:
         # 64-bit
         MAXSIZE = int((1 << 63) - 1)        # NOQA
     del X
+
+    def _stub_exec(code):
+        # they changed exec syntax too, so a compat shim for the compat shim
+        frame = sys._getframe(1)
+        exec("exec code in frame.f_globals, frame.f_locals")
+        del frame
+
+    _stub_exec(_PY2_RERAISE_STR)
+    del _stub_exec
+
 else:
+    
+
     import collections
     import struct
     string_types = str
@@ -160,3 +177,8 @@ else:
     next = next
 
     MAXSIZE = sys.maxsize       # NOQA
+    
+    def raise_saved(exc_type, exc_value, exc_traceback):
+        raise exc_value.with_traceback(exc_traceback)
+
+del _PY2_RERAISE_STR
