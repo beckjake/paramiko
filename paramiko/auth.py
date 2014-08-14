@@ -77,34 +77,23 @@ class Auth(object):
         # dunno this one
         self._disconnect_service_not_available()
 
+    def _auth_msg(self, m):
+        raise SSHException('Unknown auth method "%s"' % self.auth_method)
+
+    def _send_userauth_request(self):
+        self.transport._log(DEBUG, 'userauth is OK')
+        m = Message()
+        m.add_byte(cMSG_USERAUTH_REQUEST)
+        m.add_string(self.username)
+        m.add_string('ssh-connection')
+        m.add_string(self.METHOD)
+        self._auth_msg(m)
+        self.transport._send_message(m)
+
     def _parse_service_accept(self, m):
         service = m.get_text()
         if service == 'ssh-userauth':
-            self.transport._log(DEBUG, 'userauth is OK')
-            m = Message()
-            m.add_byte(cMSG_USERAUTH_REQUEST)
-            m.add_string(self.username)
-            m.add_string('ssh-connection')
-            m.add_string(self.auth_method)
-            if self.auth_method == 'password':
-                m.add_boolean(False)
-                password = bytestring(self.password)
-                m.add_string(password)
-            elif self.auth_method == 'publickey':
-                m.add_boolean(True)
-                m.add_string(self.private_key.get_name())
-                m.add_string(self.private_key)
-                blob = self._get_session_blob(self.private_key, 'ssh-connection', self.username)
-                sig = self.private_key.sign_ssh_data(blob)
-                m.add_string(sig)
-            elif self.auth_method == 'keyboard-interactive':
-                m.add_string('')
-                m.add_string(self.submethods)
-            elif self.auth_method == 'none':
-                pass
-            else:
-                raise SSHException('Unknown auth method "%s"' % self.auth_method)
-            self.transport._send_message(m)
+            self._send_userauth_request()
         else:
             self.transport._log(DEBUG, 'Service request "%s" accepted (?)' % service)
 
@@ -337,6 +326,14 @@ class PasswordAuth(Auth):
         self.password = password
         self.fallback = False
 
+    def _auth_msg(self, m):
+        m.add_boolean(False)
+        password = bytestring(self.password)
+        m.add_string(password)
+
+    def _handle_userauth(self, m):
+
+
     def authorize(self, transport, event=None):
         try:
             return super(PasswordAuth, self).authorize(transport, event)
@@ -352,7 +349,7 @@ class PasswordAuth(Auth):
                 raise e
 
 
-def PkeyAuth(Auth):
+class PkeyAuth(Auth):
     METHOD = 'publickey'
     def __init__(self, username, pkey, password=None):
         super(PkeyAuth, self).__init__()
@@ -360,15 +357,27 @@ def PkeyAuth(Auth):
         self.pkey = pkey
         self.password = password
 
+    def _auth_msg(self, m):
+        m.add_boolean(True)
+        m.add_string(self.private_key.get_name())
+        m.add_string(self.private_key)
+        blob = self._get_session_blob(self.private_key, 'ssh-connection', self.username)
+        sig = self.private_key.sign_ssh_data(blob)
+        m.add_string(sig)
 
-def NoAuth(Auth):
+
+
+class NoAuth(Auth):
     METHOD = 'none'
     def __init__(self, username):
         super(NoAuth, self).__init__()
         self.username = username
 
+    def _auth_msg(self, m):
+        pass
 
-def InteractiveAuth(Auth):
+
+class InteractiveAuth(Auth):
     METHOD = 'keyboard-interactive'
     def __init__(self, username, handler, submethods):
         super(InteractiveAuth, self).__init__()
@@ -392,6 +401,22 @@ def InteractiveAuth(Auth):
                         return []
                     return [self.password]
         return cls(username, password)
+
+    def _auth_msg(self, m):
+        m.add_string('')
+        m.add_string(self.submethods)
+
+
+class PasswordAuthList(PasswordAuth):
+    def __init__(self, atttempts):
+        self.attempts = attempts
+    
+    def authorize(self, transport, event=None, fallback=False):
+        for username, password in attempts:
+            if fallback:
+
+
+          
 
 
 
