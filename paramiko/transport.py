@@ -135,6 +135,8 @@ class Transport (threading.Thread):
 
     _modulus_pack = None
 
+    _packet_lookup_methods = [_basic_lookups, _local_handler_lookups, _channel_handler_lookups, _auth_handler_lookups]
+
     def __init__(self, sock):
         """
         Create a new SSH session over an existing socket, or socket-like
@@ -943,7 +945,7 @@ class Transport (threading.Thread):
             successfully; False if authentication failed and/or the session is
             closed.
         """
-        return self.active and (self.auth_handler is not None) and self.auth_handler.is_authenticated()
+        return self.active and (self.auth_handler is not None) and self.auth_handler.authenticated
 
     def get_username(self):
         """
@@ -1261,12 +1263,12 @@ class Transport (threading.Thread):
 
     ###  internals...
 
-    def _log(self, level, msg, *args):
-        if issubclass(type(msg), list):
+    def _log(self, level, msg, *args, **kwargs):
+        if isinstance(msg, list):
             for m in msg:
                 self.logger.log(level, m)
         else:
-            self.logger.log(level, msg, *args)
+            self.logger.log(level, msg, *args, **kwargs)
 
     def _get_modulus_pack(self):
         """used by KexGex to find primes for group exchange"""
@@ -1390,6 +1392,144 @@ class Transport (threading.Thread):
         finally:
             self.lock.release()
 
+    def _initial_connection(self):
+        """Perform the initial connection."""
+        self.packetizer.write_all(b(self.local_version + '\r\n'))
+        self._check_banner()
+        self._send_kex_init()
+        self._expect_packet(MSG_KEXINIT)
+
+    def _basic_lookups(self, ptype, m):
+        if ptype == MSG_IGNORE:
+            return True
+        elif ptype == MSG_DISCONNECT:
+            self._parse_disconnect(m)
+            self.active = False
+            self.packetizer.close()
+            return True
+        elif len(self._expected_packet) > 0:
+            if ptype not in self._expected_packet:
+                raise SSHException('Expecting packet from %r, got %d' % (self._expected_packet, ptype))
+            self._expected_packet = tuple()
+            if (ptype >= 30) and (ptype <= 39):
+                self.kex_engine.parse_next(ptype, m)
+                return True     
+
+    def _local_handler_lookups(self, ptype, m):
+        """Look up local handler definitions. Return True if it was handled."""
+        try:
+            handler = self._handler_table[ptype]
+        except KeyError:
+            return False
+        handler(self, m)
+        return True
+
+    def _channel_handler_lookups(self, ptype, m):
+        """Look up channel handler definitions. Return True if it was handled.
+        (even by closing and deactivating)
+        """
+        try:
+            handler = self._channel_handler_table[ptype]
+        except KeyError:
+            return False
+        chanid = m.get_int()
+        try:
+            channel = self._channels[chanid]
+        except KeyError:
+            if chanid in self.channels_seen:
+                self._log(DEBUG, 'Ignoring message for dead channel %d' % chanid)
+            else:
+                self._log(ERROR, 'Channel request for unknown channel %d' % chanid)
+                self.active = False
+                self.packetizer.close()
+            return True
+        handler(chan, m)
+
+    def _auth_handler_lookups(self, ptype, m):
+        if self.auth_handler is None:
+            return False
+        try:
+            handler = self.auth_handler.handler_table[ptype]
+        except KeyError:
+            return False
+        handler(self.auth_handler, m)
+        return True
+
+    def _failed_lookups(self, ptype, m):
+        self._log(WARNING, 'Oops, unhandled type %d' % ptype)
+        msg = Message()
+        msg.add_byte(cMSG_UNIMPLEMENTED)
+        msg.add_int(m.seqno)
+        self._send_message(msg)
+
+    def _deactivate(self):
+        """Clean up the thread before exiting."""
+        _active_threads.remove(self)
+        for chan in list(self._channels.values()):
+            chan._unlink()
+        if self.active:
+            self.active = False
+            self.packetizer.close()
+            if self.completion_event is not None:
+                self.completion_event.set()
+            if self.auth_handler is not None:
+                self.auth_handler.abort()
+            for event in self.channel_events.values():
+                event.set()
+            try:
+                self.lock.acquire()
+                self.server_accept_cv.notify()
+            finally:
+                self.lock.release()
+        self.sock.close()
+
+    def _communicate(self):
+        """Set up the connection and communicate with the server until
+        disconnected.
+        """
+        self._initial_connection()
+
+        while self.active:
+            #check if we need to rekey, otherwise get a new message
+            if self.packetizer.need_rekey() and not self.in_kex:
+                self._send_kex_init()
+            try:
+                ptype, m = self.packetizer.read_message()
+            except NeedRekeyException:
+                continue
+
+            for lookup in self._packet_lookup_methods:
+                if lookup(ptype, m):
+                    break
+            else:
+                self._failed_lookups(ptype, m)
+            
+    def _run(self):
+        """Do all the hard stuff in communicate(), handle errors here.
+        """
+        try:
+            self._communicate()
+        except SSHException as e:
+            self._log(ERROR, 'Exception: ' + str(e), exc_info=True)
+            self.saved_exception = e
+        except EOFError as e:
+            self._log(DEBUG, 'EOF in transport thread')
+            self.saved_exception = e
+        except socket.error as e:
+            if isinstance(e.args, tuple):
+                if e.args:
+                    emsg = '%s (%d)' % (e.args[1], e.args[0])
+                else:  # empty tuple, e.g. socket.timeout
+                    emsg = str(e) or repr(e)
+            else:
+                emsg = e.args
+            self._log(ERROR, 'Socket exception: ' + emsg)
+            self.saved_exception = e
+        except Exception as e:
+            self._log(ERROR, 'Unknown exception: ' + str(e), exc_info=True)
+            self.saved_exception = e
+        self._deactivate()
+
     def run(self):
         # (use the exposed "run" method, because if we specify a thread target
         # of a private method, threading.Thread will keep a reference to it
@@ -1407,98 +1547,7 @@ class Transport (threading.Thread):
         else:
             self._log(DEBUG, 'starting thread (client mode): %s' % hex(long(id(self)) & xffffffff))
         try:
-            try:
-                self.packetizer.write_all(b(self.local_version + '\r\n'))
-                self._check_banner()
-                self._send_kex_init()
-                self._expect_packet(MSG_KEXINIT)
-
-                while self.active:
-                    if self.packetizer.need_rekey() and not self.in_kex:
-                        self._send_kex_init()
-                    try:
-                        ptype, m = self.packetizer.read_message()
-                    except NeedRekeyException:
-                        continue
-                    if ptype == MSG_IGNORE:
-                        continue
-                    elif ptype == MSG_DISCONNECT:
-                        self._parse_disconnect(m)
-                        self.active = False
-                        self.packetizer.close()
-                        break
-                    elif ptype == MSG_DEBUG:
-                        self._parse_debug(m)
-                        continue
-                    if len(self._expected_packet) > 0:
-                        if ptype not in self._expected_packet:
-                            raise SSHException('Expecting packet from %r, got %d' % (self._expected_packet, ptype))
-                        self._expected_packet = tuple()
-                        if (ptype >= 30) and (ptype <= 39):
-                            self.kex_engine.parse_next(ptype, m)
-                            continue
-
-                    if ptype in self._handler_table:
-                        self._handler_table[ptype](self, m)
-                    elif ptype in self._channel_handler_table:
-                        chanid = m.get_int()
-                        chan = self._channels.get(chanid)
-                        if chan is not None:
-                            self._channel_handler_table[ptype](chan, m)
-                        elif chanid in self.channels_seen:
-                            self._log(DEBUG, 'Ignoring message for dead channel %d' % chanid)
-                        else:
-                            self._log(ERROR, 'Channel request for unknown channel %d' % chanid)
-                            self.active = False
-                            self.packetizer.close()
-                    elif (self.auth_handler is not None) and (ptype in self.auth_handler._handler_table):
-                        self.auth_handler._handler_table[ptype](self.auth_handler, m)
-                    else:
-                        self._log(WARNING, 'Oops, unhandled type %d' % ptype)
-                        msg = Message()
-                        msg.add_byte(cMSG_UNIMPLEMENTED)
-                        msg.add_int(m.seqno)
-                        self._send_message(msg)
-            except SSHException as e:
-                self._log(ERROR, 'Exception: ' + str(e))
-                self._log(ERROR, util.tb_strings())
-                self.saved_exception = e
-            except EOFError as e:
-                self._log(DEBUG, 'EOF in transport thread')
-                #self._log(DEBUG, util.tb_strings())
-                self.saved_exception = e
-            except socket.error as e:
-                if type(e.args) is tuple:
-                    if e.args:
-                        emsg = '%s (%d)' % (e.args[1], e.args[0])
-                    else:  # empty tuple, e.g. socket.timeout
-                        emsg = str(e) or repr(e)
-                else:
-                    emsg = e.args
-                self._log(ERROR, 'Socket exception: ' + emsg)
-                self.saved_exception = e
-            except Exception as e:
-                self._log(ERROR, 'Unknown exception: ' + str(e))
-                self._log(ERROR, util.tb_strings())
-                self.saved_exception = e
-            _active_threads.remove(self)
-            for chan in list(self._channels.values()):
-                chan._unlink()
-            if self.active:
-                self.active = False
-                self.packetizer.close()
-                if self.completion_event is not None:
-                    self.completion_event.set()
-                if self.auth_handler is not None:
-                    self.auth_handler.abort()
-                for event in self.channel_events.values():
-                    event.set()
-                try:
-                    self.lock.acquire()
-                    self.server_accept_cv.notify()
-                finally:
-                    self.lock.release()
-            self.sock.close()
+            self._run()
         except:
             # Don't raise spurious 'NoneType has no attribute X' errors when we
             # wake up during interpreter shutdown. Or rather -- raise
