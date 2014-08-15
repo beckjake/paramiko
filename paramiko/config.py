@@ -29,6 +29,18 @@ import socket
 SSH_PORT = 22
 proxy_re = re.compile(r"^(proxycommand)\s*=*\s*(.*)", re.I)
 
+if os.name == 'nt':
+    DEFAULT_KEYS = ((os.path.expanduser('~/ssh/id_rsa')),
+                    (os.path.expanduser('~/ssh/id_dsa')))
+    SSH_CONFIG_PATH = '~/ssh/config'
+elif os.name == 'posix':
+    SSH_CONFIG_PATH = '~/.ssh/config'
+    DEFAULT_KEYS = ((os.path.expanduser('~/.ssh/id_rsa')),
+                    (os.path.expanduser('~/.ssh/id_dsa')))
+else:
+    DEFAULT_KEYS = ()
+DEFAULT_KEYS = tuple((name for name in DEFAULT_KEYS if os.path.isfile(name)))
+DEFAULT_COMPRESSION = 'no'
 
 class SSHConfig (object):
     """
@@ -93,7 +105,7 @@ class SSHConfig (object):
                 host['config'].update({key: value})
         self._config.append(host)
 
-    def lookup(self, hostname):
+    def lookup(self, hostname, defaults=True):
         """
         Return a dict of config options for a given hostname.
 
@@ -126,6 +138,7 @@ class SSHConfig (object):
                 elif key == 'identityfile':
                     ret[key].extend(value)
         ret = self._expand_variables(ret, hostname)
+        self._set_defaults_overrides(ret)
         return ret
 
     def _allowed(self, hostname, hosts):
@@ -136,6 +149,14 @@ class SSHConfig (object):
             elif fnmatch.fnmatch(hostname, host):
                 match = True
         return match
+
+    def _set_defaults_overrides(self, config):
+        """Set some defaults."""
+        config['compression'] = (config.get('compression', 'no') == 'yes')
+        config.setdefault('port', SSH_PORT)
+        identities = config.setdefault('identityfile', [])
+        identities.extend(k for k in DEFAULT_KEYS if k not in identities)
+        config.setdefault('user', os.getenv('USER'))
 
     def _expand_variables(self, config, hostname):
         """
@@ -259,3 +280,4 @@ class LazyFqdn(object):
             # Cache
             self.fqdn = fqdn
         return self.fqdn
+

@@ -445,3 +445,4 @@ class ServerAuth(Auth):
         # okay, send result
         if result is not None:
             self._send_auth_result(username, method, result)
+

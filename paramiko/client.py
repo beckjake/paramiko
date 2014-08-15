@@ -30,7 +30,7 @@ import warnings
 from paramiko.agent import Agent
 from paramiko.auth import PkeyAuth, PasswordAuth, NoAuth, InteractiveAuth
 from paramiko.common import DEBUG
-from paramiko.config import SSH_PORT
+from paramiko.config import SSH_PORT, SSHConfig
 from paramiko.dsskey import DSSKey
 from paramiko.hostkeys import HostKeys
 from paramiko.py3compat import string_types, raise_saved
@@ -39,6 +39,7 @@ from paramiko.rsakey import RSAKey
 from paramiko.ssh_exception import SSHException, BadHostKeyException
 from paramiko.transport import Transport
 from paramiko.util import retry_on_signal
+
 
 
 def get_socket(hostname, port=SSH_PORT, timeout=None):
@@ -69,27 +70,20 @@ def get_socket(hostname, port=SSH_PORT, timeout=None):
     return sock
 
 
-class ExceptContext(object):
-    """Context manager to grab exceptions."""
-    def __init__(self, depth=0):
-        self.saved_exc = None
-        self.depth = depth
-
-    def __enter__(self):
-        self.depth += 1
-        return self
-
-    def __exit__(self, type, value, traceback):
-
-        if type:
-            self.saved_exc = (type, value, traceback)
-        self.depth -= 1
-        if self.depth > 0 or self.saved_exc is None:
-            return True
-
-        raise_saved(*self.saved_exc)
-
-
+def _add_keypath(keys, hashes, pkey_classes, filename):
+    pkey = None
+    for pkey_class in pkey_classes:
+        try:
+            pkey = pkey_class.from_private_key_file(filename)
+            break
+        except (EnvironmentError, SSHException):
+            pass
+    if pkey:
+        phash = hash(pkey)
+        if phash not in hashes:
+            hashes.add(phash)
+            keys.append(pkey)
+    
 
 
 class SSHClient (object):
@@ -111,13 +105,8 @@ class SSHClient (object):
     """
     Transport = Transport
     KEY_CLASSES = (RSAKey, DSSKey)
-    DEFAULT_KEYS = tuple((cls, name) for cls, name in
-                         (RSAKey, os.path.expanduser('~/.ssh/id_rsa')),
-                         (DSAKey, os.path.expanduser('~/.ssh/id_dsa')),
-                         (RSAKey, os.path.expanduser('~/ssh/id_rsa')),
-                         (DSAKey, os.path.expanduser('~/ssh/id_dsa'))
-                         if os.path.isfile(filename))
-    def __init__(self):
+    
+    def __init__(self, get_config=True):
         """
         Create a new SSHClient.
         """
@@ -128,6 +117,19 @@ class SSHClient (object):
         self._policy = RejectPolicy()
         self._transport = None
         self._agent = None
+        self._config = SSHConfig()
+        if get_config:
+            self.load_config(self.SSH_CONFIG_PATH)
+
+    def load_config(self, path):
+        """Load the configuration from the paths listed in paths, in order.
+        """
+        try:
+            with open(path, 'rb') as fileObj:
+                self._config.parse(fileObj)
+                return
+        except EnvironmentError:
+            pass
 
     def load_system_host_keys(self, filename=None):
         """
@@ -282,24 +284,61 @@ class SSHClient (object):
         if server_key != our_server_key:
             raise BadHostKeyException(hostname, server_key, our_server_key)
 
+    def _default_authorizers(self, hostname, username, password=None, pkeys=None):
+        username = getpass.getpass() if username is None else username
+        authorizers = []
+        try:
+            if self._agent is None:
+                self._agent = Agent()
+            for key in self._agent.get_keys():
+                authorizers.append(PkeyAuth(username, key))
+        except (EnvironmentError, SSHException) as e:
+            self._log(WARN, 'Error getting keys from agent', exc_info=True)
+        for pkey in pkeys:
+            authorizers.append(PkeyAuth(username, pkey))
+        if password:
+            authorizers.append(PasswordAuth(username, password))
+        return authorizers
 
-    def connect(self, hostname, port=SSH_PORT, username=None, password=None, pkey=None,
-                key_filename=None, timeout=None, allow_agent=True, look_for_keys=True,
-                compress=False, sock=None):
+    def _lookup_missing(self, hostname, port=None, username=None, password=None, pkeys=None, timeout=None, compress=None, sock=None):
+        """Look up unsupplied arguments in the config."""
+        config = self._config.lookup(hostname, True)
+        if port is None:
+            port = config['port']
+        if username is None:
+            username = config.get('user', getpass.getuser())
+        
+        pkeys = [] if pkeys is None else pkeys
+        _hashes = set(hash(p) for p in pkeys)
+        for filepath in config.get('identityfile', []):
+            key = _add_keypath(pkeys, _hashes, self.KEY_CLASSES, filepath)
+            if key:
+                self._log(DEBUG, 'found key %s at %s' % (hexlify(key.get_fingerprint()), filepath))
+
+        if timeout is None:
+            try:
+                timeout = int(config['connecttimeout'])
+            except (KeyError, ValueError):
+                pass
+        
+        if compress is None:
+            compress = config['compression']
+        
+        if not sock:
+            sock = get_socket(hostname, port, timeout)
+
+        return (username, pkeys, sock, compress)
+
+
+    def connect(self, hostname, port=None, username=None, authorizers=None, timeout=None, compress=False, sock=None):
         """
-        Connect to an SSH server and authenticate to it.  The server's host key
-        is checked against the system host keys (see `load_system_host_keys`)
-        and any local host keys (`load_host_keys`).  If the server's hostname
-        is not found in either set of host keys, the missing host key policy
-        is used (see `set_missing_host_key_policy`).  The default policy is
-        to reject the key and raise an `.SSHException`.
+        Connect to an SSH server and authenticate to it (see `_attach_transport`).
+        The server's host key is checked against the system host keys
+        (see `_key_check`).
 
-        Authentication is attempted in the following order of priority:
-
-            - The ``pkey`` or ``key_filename`` passed in (if any)
-            - Any key we can find through an SSH agent
-            - Any "id_rsa" or "id_dsa" key discoverable in ``~/.ssh/``
-            - Plain username/password auth, if a password was given
+        Authentication is attempted in the order of given authorizers. If no
+        authorizers are given, a default list of local SSH agents and local
+        id_rsa/id_dsa
 
         If a private key requires a password to unlock it, and a password is
         passed in, that password will be used to attempt to unlock the key.
@@ -332,22 +371,19 @@ class SSHClient (object):
             establishing an SSH session
         :raises socket.error: if a socket error occurred while connecting
         """
-        if not sock:
-            sock = get_socket(hostname, port, timeout)
+        (username, pkeys,
+         sock, compression) = self._lookup_missing(hostname, port, username,
+                                                   password, pkeys, timeout,
+                                                   compression)
 
-        t = self._attach_transport(sock)
+        t = self._attach_transport(sock, compression)
         self._key_check(hostname, port)
+        
+        if authorizers is None:
+            authorizers = self._default_authorizers(username, password, pkeys)
 
-        if username is None:
-            username = getpass.getuser()
+        self.auth(authorizers)
 
-        if key_filename is None:
-            key_filenames = []
-        elif isinstance(key_filename, string_types):
-            key_filenames = [key_filename]
-        else:
-            key_filenames = key_filename
-        self._auth(username, password, pkey, key_filenames, allow_agent, look_for_keys)
 
     def close(self):
         """
@@ -453,61 +489,6 @@ class SSHClient (object):
         if saved_exc:
             raise saved_exc
         raise SSHException('No authentication methods available')
-
-    def _auth_stub(self, username, password, pkey, key_filenames, allow_agent, look_for_keys):
-        authorizers = []
-        saved_exc = None
-        if pkey:
-            authorizers.append(PkeyAuth(username, pkey, password))
-        for key_filename, pkey_class in itertools.product(key_filenames, self.KEY_CLASSES):
-            try:
-                key = pkey_class.from_private_key_file(key_filename, password)
-                self._log(DEBUG, 'Found candidate key %s from %s' % (hexlify(key.get_fingerprint()), key_filename))
-                authorizers.append(PkeyAuth(username, key))
-            except (EnvironmentError, SSHException) as e:
-                saved_exc = e
-        if allow_agent:
-            try:
-                if self._agent is None:
-                    self._agent = Agent()
-                for key in self._agent.get_keys():
-                    authorizers.append(PkeyAuth(username, key))
-            except (EnvironmentError, SSHException) as e:
-                saved_exc = e
-        if look_for_keys:
-            for key in self.DEFAULT_KEYS:
-                try:
-                    key = pkey_class.from_private_key_file(filename, password)
-                    self._log(DEBUG, 'Discovered key %s in %s' % (hexlify(key.get_fingerprint()), filename))
-                    authorizers.append(PkeyAuth(username, key))
-                except (EnvironmentError, SSHException) as e:
-                    saved_exc = e
-        if password is not None:
-            authorizers.append(PasswordAuth(username, password))
-
-        try:
-            self.auth(authorizers)
-        except SSHException as e:
-            saved_exc = e
-
-        if saved_exc is not None:
-            raise saved_exc
-        raise SSHException('No authentication methods available')
-        #should never happen
-
-    def _auth(self, username, password, pkey, key_filenames, agent, look_for_keys):
-        """
-        Try, in order:
-
-            - The key passed in, if one was passed in.
-            - Any key we can find through an SSH agent (if allowed).
-            - Any "id_rsa" or "id_dsa" key discoverable in ~/.ssh/ (if allowed).
-            - Plain username/password auth, if a password was given.
-
-        (The password might be needed to unlock a private key, or for
-        two-factor authentication [for which it is required].)
-        """
-        return self._auth_stub(username, password, pkey, key_filenames, agent, look_for_keys)
 
     def _log(self, level, msg):
         self._transport._log(level, msg)
