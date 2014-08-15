@@ -1,7 +1,7 @@
-
+import copy
 import threading
 
-# abstract.
+# base class, do not instantiate.
 class Auth(object):
     def __init__(self):
         self.transport = None
@@ -66,15 +66,6 @@ class Auth(object):
         return []
 
     def _parse_service_request(self, m):
-        service = m.get_text()
-        if self.transport.server_mode and (service == 'ssh-userauth'):
-            # accepted
-            m = Message()
-            m.add_byte(cMSG_SERVICE_ACCEPT)
-            m.add_string(service)
-            self.transport._send_message(m)
-            return
-        # dunno this one
         self._disconnect_service_not_available()
 
     def _auth_msg(self, m):
@@ -131,101 +122,16 @@ class Auth(object):
             m.add_string(p[0])
             m.add_boolean(p[1])
         self.transport._send_message(m)
- 
+
     def _parse_userauth_request(self, m):
-        if not self.transport.server_mode:
-            # er, uh... what?
-            m = Message()
-            m.add_byte(cMSG_USERAUTH_FAILURE)
-            m.add_string('none')
-            m.add_boolean(False)
-            self.transport._send_message(m)
-            return
-        if self.authenticated:
-            # ignore
-            return
-        username = m.get_text()
-        service = m.get_text()
-        method = m.get_text()
-        self.transport._log(DEBUG, 'Auth request (type=%s) service=%s, username=%s' % (method, service, username))
-        if service != 'ssh-connection':
-            self._disconnect_service_not_available()
-            return
-        if (self.auth_username is not None) and (self.auth_username != username):
-            self.transport._log(WARNING, 'Auth rejected because the client attempted to change username in mid-flight')
-            self._disconnect_no_more_auth()
-            return
-        self.auth_username = username
-
-        if method == 'none':
-            result = self.transport.server_object.check_auth_none(username)
-        elif method == 'password':
-            changereq = m.get_boolean()
-            password = m.get_binary()
-            try:
-                password = password.decode('UTF-8')
-            except UnicodeError:
-                # some clients/servers expect non-utf-8 passwords!
-                # in this case, just return the raw byte string.
-                pass
-            if changereq:
-                # always treated as failure, since we don't support changing passwords, but collect
-                # the list of valid auth types from the callback anyway
-                self.transport._log(DEBUG, 'Auth request to change passwords (rejected)')
-                newpassword = m.get_binary()
-                try:
-                    newpassword = newpassword.decode('UTF-8', 'replace')
-                except UnicodeError:
-                    pass
-                result = AUTH_FAILED
-            else:
-                result = self.transport.server_object.check_auth_password(username, password)
-        elif method == 'publickey':
-            sig_attached = m.get_boolean()
-            keytype = m.get_text()
-            keyblob = m.get_binary()
-            try:
-                key = self.transport._key_info[keytype](Message(keyblob))
-            except SSHException as e:
-                self.transport._log(INFO, 'Auth rejected: public key: %s' % str(e))
-                key = None
-            except:
-                self.transport._log(INFO, 'Auth rejected: unsupported or mangled public key')
-                key = None
-            if key is None:
-                self._disconnect_no_more_auth()
-                return
-            # first check if this key is okay... if not, we can skip the verify
-            result = self.transport.server_object.check_auth_publickey(username, key)
-            if result != AUTH_FAILED:
-                # key is okay, verify it
-                if not sig_attached:
-                    # client wants to know if this key is acceptable, before it
-                    # signs anything...  send special "ok" message
-                    m = Message()
-                    m.add_byte(cMSG_USERAUTH_PK_OK)
-                    m.add_string(keytype)
-                    m.add_string(keyblob)
-                    self.transport._send_message(m)
-                    return
-                sig = Message(m.get_binary())
-                blob = self._get_session_blob(key, service, username)
-                if not key.verify_ssh_sig(blob, sig):
-                    self.transport._log(INFO, 'Auth rejected: invalid signature')
-                    result = AUTH_FAILED
-        elif method == 'keyboard-interactive':
-            lang = m.get_string()
-            submethods = m.get_string()
-            result = self.transport.server_object.check_auth_interactive(username, submethods)
-            if isinstance(result, InteractiveQuery):
-                # make interactive query instead of response
-                self._interactive_query(result)
-                return
-        else:
-            result = self.transport.server_object.check_auth_none(username)
-        # okay, send result
-        self._send_auth_result(username, method, result)
-
+        # er, uh... what?
+        m = Message()
+        m.add_byte(cMSG_USERAUTH_FAILURE)
+        m.add_string('none')
+        m.add_boolean(False)
+        self.transport._send_message(m)
+        return
+        
     def _parse_userauth_success(self, m):
         self.transport._log(INFO, 'Authentication (%s) successful!' % self.auth_method)
         self.authenticated = True
@@ -318,6 +224,7 @@ class Auth(object):
             return []
 
 
+
 class PasswordAuth(Auth):
     METHOD = 'password'
     def __init__(self, username, password, fallback=False):
@@ -357,6 +264,9 @@ class PkeyAuth(Auth):
         self.pkey = pkey
         self.password = password
 
+    def _logmsg(self, log):
+        log(DEBUG, 'Trying SSH key %s' % hexlify(self.pkey.get_fingerprint()))
+
     def _auth_msg(self, m):
         m.add_boolean(True)
         m.add_string(self.private_key.get_name())
@@ -364,7 +274,6 @@ class PkeyAuth(Auth):
         blob = self._get_session_blob(self.private_key, 'ssh-connection', self.username)
         sig = self.private_key.sign_ssh_data(blob)
         m.add_string(sig)
-
 
 
 class NoAuth(Auth):
@@ -416,7 +325,123 @@ class PasswordAuthList(PasswordAuth):
             if fallback:
 
 
-          
+class ServerAuth(Auth):
+    handler_table = copy.copy(Auth.handler_table)
+    def _parse_service_request(self, m):
+        service = m.get_text()
+        if service == 'ssh-userauth':
+            # accepted
+            m = Message()
+            m.add_byte(cMSG_SERVICE_ACCEPT)
+            m.add_string(service)
+            self.transport._send_message(m)
+            return
+        else:
+            self._disconnect_service_not_available()
 
+    def _parse_auth_password(self, username, m):
+        changereq = m.get_boolean()
+        password = m.get_binary()
+        try:
+            password = password.decode('UTF-8')
+        except UnicodeError:
+            # some clients/servers expect non-utf-8 passwords!
+            # in this case, just return the raw byte string.
+            pass
+        if changereq:
+            # always treated as failure, since we don't support changing passwords, but collect
+            # the list of valid auth types from the callback anyway
+            self.transport._log(DEBUG, 'Auth request to change passwords (rejected)')
+            newpassword = m.get_binary()
+            try:
+                newpassword = newpassword.decode('UTF-8', 'replace')
+            except UnicodeError:
+                pass
+            return AUTH_FAILED
+        else:
+            return self.transport.server_object.check_auth_password(username, password)
 
+    def _send_pkey_ok(self):
+        m = Message()
+        m.add_byte(cMSG_USERAUTH_PK_OK)
+        m.add_string(keytype)
+        m.add_string(keyblob)
+        self.transport._send_message(m)
 
+    def _key_check(self, username, key, service, m):
+        sig = Message(m.get_binary())
+        blob = self._get_session_blob(key, service, username)
+        return key.verify_ssh_sig(blob, sig)
+
+    def _parse_auth_pkey(self, username, service, m):
+        sig_attached = m.get_boolean()
+        keytype = m.get_text()
+        keyblob = m.get_binary()
+        try:
+            key = self.transport._key_info[keytype](Message(keyblob))
+        except SSHException as e:
+            self.transport._log(INFO, 'Auth rejected: public key: %s' % str(e))
+            key = None
+        except:
+            self.transport._log(INFO, 'Auth rejected: unsupported or mangled public key')
+            key = None
+        if key is None:
+            self._disconnect_no_more_auth()
+            return
+        # first check if this key is okay... if not, we can skip the verify
+        result = self.transport.server_object.check_auth_publickey(username, key)
+        if result == AUTH_FAILED:
+            return result
+
+        # key is okay, verify it
+        if not sig_attached:
+            # client wants to know if this key is acceptable, before it
+            # signs anything...  send special "ok" message
+            self._send_pkey_ok()
+            return
+        if not self._key_check(username, key, service, m):
+            self.transport._log(INFO, 'Auth rejected: invalid signature')
+            return AUTH_FAILED
+        return result
+
+    def _parse_auth_interactive(self, username, m):
+            lang = m.get_string()
+            submethods = m.get_string()
+            result = self.transport.server_object.check_auth_interactive(username, submethods)
+            if isinstance(result, InteractiveQuery):
+                # make interactive query instead of response
+                self._interactive_query(result)
+                return
+            return result
+
+    def _parse_userauth_request(self, m):
+        if self.authenticated:
+            # ignore
+            return
+        username = m.get_text()
+        service = m.get_text()
+        method = m.get_text()
+        self.transport._log(DEBUG, 'Auth request (type=%s) service=%s, username=%s' % (method, service, username))
+        
+        if service != 'ssh-connection':
+            self._disconnect_service_not_available()
+            return
+        if (self.auth_username is not None) and (self.auth_username != username):
+            self.transport._log(WARNING, 'Auth rejected because the client attempted to change username in mid-flight')
+            self._disconnect_no_more_auth()
+            return
+        self.auth_username = username
+
+        if method == 'none':
+            result = self.transport.server_object.check_auth_none(username)
+        elif method == 'password':
+            result = self._parse_auth_password(username, m) 
+        elif method == 'publickey':
+            result = self._parse_auth_pkey(username, service, m)
+        elif method == 'keyboard-interactive':
+            result = self._parse_auth_interactive(username, m)
+        else:
+            result = self.transport.server_object.check_auth_none(username)
+        # okay, send result
+        if result is not None:
+            self._send_auth_result(username, method, result)

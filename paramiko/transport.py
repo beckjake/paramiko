@@ -1806,7 +1806,7 @@ class Transport (threading.Thread):
         self.kex_engine = None
         if self.server_mode and (self.auth_handler is None):
             # create auth handler for server mode
-            self.auth_handler = AuthHandler(self)
+            self.auth_handler = auth.ServerAuth()
         if not self.initial_kex_done:
             # this was the first key exchange
             self.initial_kex_done = True
