@@ -70,11 +70,11 @@ def get_socket(hostname, port=SSH_PORT, timeout=None):
     return sock
 
 
-def _add_keypath(keys, hashes, pkey_classes, filename):
+def _add_keypath(keys, hashes, pkey_classes, filename, password=None):
     pkey = None
     for pkey_class in pkey_classes:
         try:
-            pkey = pkey_class.from_private_key_file(filename)
+            pkey = pkey_class.from_private_key_file(filename, password)
             break
         except (EnvironmentError, SSHException):
             pass
@@ -300,7 +300,9 @@ class SSHClient (object):
             authorizers.append(PasswordAuth(username, password))
         return authorizers
 
-    def _lookup_missing(self, hostname, port=None, username=None, password=None, pkeys=None, timeout=None, compress=None, sock=None):
+    def _lookup_missing(self, hostname, port=None, username=None, password=None,
+                        pkeys=None, timeout=None, compress=None, sock=None,
+                        key_filenames=None):
         """Look up unsupplied arguments in the config."""
         config = self._config.lookup(hostname, True)
         if port is None:
@@ -308,10 +310,14 @@ class SSHClient (object):
         if username is None:
             username = config.get('user', getpass.getuser())
         
-        pkeys = [] if pkeys is None else pkeys
+        if key_filenames is None:
+            key_filenames = []
+        key_filenames.extend(config.get('identityfile', []))
+        if pkeys is None:
+            pkeys = []
         _hashes = set(hash(p) for p in pkeys)
-        for filepath in config.get('identityfile', []):
-            key = _add_keypath(pkeys, _hashes, self.KEY_CLASSES, filepath)
+        for filepath in key_filenames:
+            key = _add_keypath(pkeys, _hashes, self.KEY_CLASSES, filepath, password)
             if key:
                 self._log(DEBUG, 'found key %s at %s' % (hexlify(key.get_fingerprint()), filepath))
 
@@ -330,7 +336,7 @@ class SSHClient (object):
         return (username, pkeys, sock, compress)
 
 
-    def connect(self, hostname, port=None, username=None, authorizers=None, timeout=None, compress=False, sock=None):
+    def connect(self, hostname, port=None, username=None, authorizers=None, timeout=None, compress=False, sock=None, **kwargs):
         """
         Connect to an SSH server and authenticate to it (see `_attach_transport`).
         The server's host key is checked against the system host keys
@@ -340,29 +346,29 @@ class SSHClient (object):
         authorizers are given, a default list of local SSH agents and local
         id_rsa/id_dsa
 
-        If a private key requires a password to unlock it, and a password is
-        passed in, that password will be used to attempt to unlock the key.
-
         :param str hostname: the server to connect to
         :param int port: the server port to connect to
         :param str username:
             the username to authenticate as (defaults to the current local
             username)
-        :param str password:
-            a password to use for authentication or for unlocking a private key
-        :param .PKey pkey: an optional private key to use for authentication
-        :param str key_filename:
-            the filename, or list of filenames, of optional private key(s) to
-            try for authentication
-        :param float timeout: an optional timeout (in seconds) for the TCP connect
-        :param bool allow_agent: set to False to disable connecting to the SSH agent
-        :param bool look_for_keys:
-            set to False to disable searching for discoverable private key
-            files in ``~/.ssh/``
+        :param list authorizers:
+            The list of Auth objects to use for authorization
+        :param float timeout:
+            an optional timeout (in seconds) for the TCP connect
         :param bool compress: set to True to turn on compression
         :param socket sock:
             an open socket or socket-like object (such as a `.Channel`) to use
             for communication to the target host
+
+        Optional **kwargs elements, only used if authorizers is None:
+
+        :param str password:
+            a password to use for authentication or for unlocking a private key
+        :param list pkeys:
+            a list of .PKey - optional private keys to use for authentication
+        :param list key_filenames:
+            the list of filenames, of optional private key(s) to try for
+            authentication
 
         :raises BadHostKeyException: if the server's host key could not be
             verified
@@ -371,6 +377,7 @@ class SSHClient (object):
             establishing an SSH session
         :raises socket.error: if a socket error occurred while connecting
         """
+        password = kwargs.get('password')
         (username, pkeys,
          sock, compression) = self._lookup_missing(hostname, port, username,
                                                    password, pkeys, timeout,
@@ -383,7 +390,6 @@ class SSHClient (object):
             authorizers = self._default_authorizers(username, password, pkeys)
 
         self.auth(authorizers)
-
 
     def close(self):
         """
