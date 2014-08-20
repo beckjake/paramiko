@@ -138,7 +138,8 @@ class SSHConfig (object):
                 elif key == 'identityfile':
                     ret[key].extend(value)
         ret = self._expand_variables(ret, hostname)
-        self._set_defaults_overrides(ret)
+        if defaults:
+            self._set_defaults_overrides(ret)
         return ret
 
     def _allowed(self, hostname, hosts):
