@@ -28,9 +28,10 @@ import time
 import weakref
 from hashlib import md5, sha1
 
-import paramiko
-from paramiko import util
-from paramiko.auth_handler import AuthHandler
+#import paramiko
+from . import util
+from . import __version__ as paramiko_version
+from paramiko import auth
 from paramiko.channel import Channel
 from paramiko.common import xffffffff, cMSG_CHANNEL_OPEN, cMSG_IGNORE, \
     cMSG_GLOBAL_REQUEST, DEBUG, MSG_KEXINIT, MSG_IGNORE, MSG_DISCONNECT, \
@@ -42,7 +43,7 @@ from paramiko.common import xffffffff, cMSG_CHANNEL_OPEN, cMSG_IGNORE, \
     MSG_CHANNEL_OPEN_SUCCESS, MSG_CHANNEL_OPEN_FAILURE, MSG_CHANNEL_OPEN, \
     MSG_CHANNEL_SUCCESS, MSG_CHANNEL_FAILURE, MSG_CHANNEL_DATA, \
     MSG_CHANNEL_EXTENDED_DATA, MSG_CHANNEL_WINDOW_ADJUST, MSG_CHANNEL_REQUEST, \
-    MSG_CHANNEL_EOF, MSG_CHANNEL_CLOSE
+    MSG_CHANNEL_EOF, MSG_CHANNEL_CLOSE, MSG_NAMES
 from paramiko.compress import ZlibCompressor, ZlibDecompressor
 from paramiko.dsskey import DSSKey
 from paramiko.kex_gex import KexGex
@@ -86,7 +87,7 @@ class Transport (threading.Thread):
     forwardings).
     """
     _PROTO_ID = '2.0'
-    _CLIENT_ID = 'paramiko_%s' % paramiko.__version__
+    _CLIENT_ID = 'paramiko_%s' % paramiko_version
 
     _preferred_ciphers = ('aes128-ctr', 'aes256-ctr', 'aes128-cbc', 'blowfish-cbc',
                           'aes256-cbc', '3des-cbc', 'arcfour128', 'arcfour256')
@@ -135,7 +136,6 @@ class Transport (threading.Thread):
 
     _modulus_pack = None
 
-    _packet_lookup_methods = [_basic_lookups, _local_handler_lookups, _channel_handler_lookups, _auth_handler_lookups]
 
     def __init__(self, sock):
         """
@@ -243,7 +243,7 @@ class Transport (threading.Thread):
         self.clear_to_send = threading.Event()
         self.clear_to_send_lock = threading.Lock()
         self.clear_to_send_timeout = 30.0
-        self.log_name = 'paramiko.transport'
+        self.log_name = __file__
         self.logger = util.get_logger(self.log_name)
         self.packetizer.set_log(self.logger)
         self.auth_handler = None
@@ -945,7 +945,7 @@ class Transport (threading.Thread):
         """
         if not self.active or (self.auth_handler is None):
             return None
-        return self.auth_handler.get_username()
+        return self.auth_handler.username
 
     def get_banner(self):
         """
@@ -980,10 +980,9 @@ class Transport (threading.Thread):
         """
         if (not self.active) or (not self.initial_kex_done):
             raise SSHException('No existing session')
-        my_event = threading.Event()
-        self.auth_handler = AuthHandler(self)
-        self.auth_handler.auth_none(username, my_event)
-        return self.auth_handler.wait_for_response(my_event)
+        self.auth_handler = auth.NoAuth(username)
+        return self.auth_handler.authorize(self)
+
 
     def auth_password(self, username, password, event=None, fallback=True):
         """
@@ -1033,36 +1032,8 @@ class Transport (threading.Thread):
         if (not self.active) or (not self.initial_kex_done):
             # we should never try to send the password unless we're on a secure link
             raise SSHException('No existing session')
-        if event is None:
-            my_event = threading.Event()
-        else:
-            my_event = event
-        self.auth_handler = AuthHandler(self)
-        self.auth_handler.auth_password(username, password, my_event)
-        if event is not None:
-            # caller wants to wait for event themselves
-            return []
-        try:
-            return self.auth_handler.wait_for_response(my_event)
-        except BadAuthenticationType as e:
-            # if password auth isn't allowed, but keyboard-interactive *is*, try to fudge it
-            if not fallback or ('keyboard-interactive' not in e.allowed_types):
-                raise
-            try:
-                def handler(title, instructions, fields):
-                    if len(fields) > 1:
-                        raise SSHException('Fallback authentication failed.')
-                    if len(fields) == 0:
-                        # for some reason, at least on os x, a 2nd request will
-                        # be made with zero fields requested.  maybe it's just
-                        # to try to fake out automated scripting of the exact
-                        # type we're doing here.  *shrug* :)
-                        return []
-                    return [password]
-                return self.auth_interactive(username, handler)
-            except SSHException:
-                # attempt failed; just raise the original exception
-                raise e
+        self.auth_handler = auth.PasswordAuth(username, password, fallback=fallback)
+        return self.auth_handler.authorize(self, event)
 
     def auth_publickey(self, username, key, event=None):
         """
@@ -1100,16 +1071,8 @@ class Transport (threading.Thread):
         if (not self.active) or (not self.initial_kex_done):
             # we should never try to authenticate unless we're on a secure link
             raise SSHException('No existing session')
-        if event is None:
-            my_event = threading.Event()
-        else:
-            my_event = event
-        self.auth_handler = AuthHandler(self)
-        self.auth_handler.auth_publickey(username, key, my_event)
-        if event is not None:
-            # caller wants to wait for event themselves
-            return []
-        return self.auth_handler.wait_for_response(my_event)
+        self.auth_handler = auth.PkeyAuth(username, key)
+        return self.auth_handler.authorize(self, event)
 
     def auth_interactive(self, username, handler, submethods=''):
         """
@@ -1157,10 +1120,8 @@ class Transport (threading.Thread):
         if (not self.active) or (not self.initial_kex_done):
             # we should never try to authenticate unless we're on a secure link
             raise SSHException('No existing session')
-        my_event = threading.Event()
-        self.auth_handler = AuthHandler(self)
-        self.auth_handler.auth_interactive(username, handler, my_event, submethods)
-        return self.auth_handler.wait_for_response(my_event)
+        self.auth_handler = auth.InteractiveAuth(username, handler, submethods)
+        return self.auth_handler.authorize(self)
 
     def set_log_channel(self, name):
         """
@@ -1418,9 +1379,8 @@ class Transport (threading.Thread):
         except KeyError:
             return False
         chanid = m.get_int()
-        try:
-            channel = self._channels[chanid]
-        except KeyError:
+        channel = self._channels.get(chanid)
+        if channel is None:
             if chanid in self.channels_seen:
                 self._log(DEBUG, 'Ignoring message for dead channel %d' % chanid)
             else:
@@ -1428,25 +1388,32 @@ class Transport (threading.Thread):
                 self.active = False
                 self.packetizer.close()
             return True
-        handler(chan, m)
+        handler(channel, m)
+        return True
 
     def _auth_handler_lookups(self, ptype, m):
         if self.auth_handler is None:
             return False
         try:
-            handler = self.auth_handler.handler_table[ptype]
+            handler = self.auth_handler.handler_lookup(ptype)
         except KeyError:
             return False
-        handler(self.auth_handler, m)
+        handler(m)
         return True
 
     def _failed_lookups(self, ptype, m):
-        self._log(WARNING, 'Oops, unhandled type %d' % ptype)
+        self._log(WARNING, 'Oops, unhandled type %d (%s)' % (ptype, MSG_NAMES.get(ptype, '<unknown>')))
         msg = Message()
         msg.add_byte(cMSG_UNIMPLEMENTED)
         msg.add_int(m.seqno)
         self._send_message(msg)
 
+    def _packet_lookup_methods(self):
+        yield self._basic_lookups
+        yield self._local_handler_lookups
+        yield self._channel_handler_lookups
+        yield self._auth_handler_lookups
+    
     def _deactivate(self):
         """Clean up the thread before exiting."""
         _active_threads.remove(self)
@@ -1480,7 +1447,7 @@ class Transport (threading.Thread):
             except NeedRekeyException:
                 continue
 
-            for lookup in self._packet_lookup_methods:
+            for lookup in self._packet_lookup_methods():
                 if lookup(ptype, m):
                     break
             else:
@@ -1806,7 +1773,7 @@ class Transport (threading.Thread):
         self.kex_engine = None
         if self.server_mode and (self.auth_handler is None):
             # create auth handler for server mode
-            self.auth_handler = auth.ServerAuth()
+            self.auth_handler = auth.ServerAuth(self)
         if not self.initial_kex_done:
             # this was the first key exchange
             self.initial_kex_done = True
@@ -1916,13 +1883,13 @@ class Transport (threading.Thread):
             self._log(DEBUG, 'Incoming forward agent connection')
             with self.lock:
                 my_chanid = self._next_channel()
-                    elif (kind == 'x11') and (self._x11_handler is not None):
+        elif (kind == 'x11') and (self._x11_handler is not None):
             origin_addr = m.get_text()
             origin_port = m.get_int()
             self._log(DEBUG, 'Incoming x11 connection from %s:%d' % (origin_addr, origin_port))
             with self.lock:
                 my_chanid = self._next_channel()
-                    elif (kind == 'forwarded-tcpip') and (self._tcp_handler is not None):
+        elif (kind == 'forwarded-tcpip') and (self._tcp_handler is not None):
             server_addr = m.get_text()
             server_port = m.get_int()
             origin_addr = m.get_text()
@@ -1930,14 +1897,14 @@ class Transport (threading.Thread):
             self._log(DEBUG, 'Incoming tcp forwarded connection from %s:%d' % (origin_addr, origin_port))
             with self.lock:
                 my_chanid = self._next_channel()
-                    elif not self.server_mode:
+        elif not self.server_mode:
             self._log(DEBUG, 'Rejecting "%s" channel request from server.' % kind)
             reject = True
             reason = OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
         else:
             with self.lock:
                 my_chanid = self._next_channel()
-                        if kind == 'direct-tcpip':
+            if kind == 'direct-tcpip':
                 # handle direct-tcpip requests comming from the client
                 dest_addr = m.get_text()
                 dest_port = m.get_int()
@@ -1967,7 +1934,7 @@ class Transport (threading.Thread):
             chan._set_transport(self)
             chan._set_window(self.window_size, self.max_packet_size)
             chan._set_remote_channel(chanid, initial_window_size, max_packet_size)
-                m = Message()
+            m = Message()
         m.add_byte(cMSG_CHANNEL_OPEN_SUCCESS)
         m.add_int(chanid)
         m.add_int(my_chanid)

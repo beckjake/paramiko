@@ -1,5 +1,23 @@
 import copy
 import threading
+import weakref
+
+
+from paramiko.message import Message
+from paramiko.common import cMSG_SERVICE_REQUEST, cMSG_DISCONNECT, \
+    DISCONNECT_SERVICE_NOT_AVAILABLE, DISCONNECT_NO_MORE_AUTH_METHODS_AVAILABLE, \
+    cMSG_USERAUTH_REQUEST, cMSG_SERVICE_ACCEPT, DEBUG, AUTH_SUCCESSFUL, INFO, \
+    cMSG_USERAUTH_SUCCESS, cMSG_USERAUTH_FAILURE, AUTH_PARTIALLY_SUCCESSFUL, \
+    cMSG_USERAUTH_INFO_REQUEST, WARNING, AUTH_FAILED, cMSG_USERAUTH_PK_OK, \
+    cMSG_USERAUTH_INFO_RESPONSE, MSG_SERVICE_REQUEST, MSG_SERVICE_ACCEPT, \
+    MSG_USERAUTH_REQUEST, MSG_USERAUTH_SUCCESS, MSG_USERAUTH_FAILURE, \
+    MSG_USERAUTH_BANNER, MSG_USERAUTH_INFO_REQUEST, MSG_USERAUTH_INFO_RESPONSE
+from paramiko.py3compat import bytestring
+from paramiko.ssh_exception import SSHException, AuthenticationException, \
+    BadAuthenticationType, PartialAuthentication
+from paramiko.server import InteractiveQuery
+from paramiko.util import get_logger
+
 
 # base class, do not instantiate.
 class Auth(object):
@@ -8,11 +26,13 @@ class Auth(object):
         self.auth_event = None
         self.authenticated = False
         self.banner = None
+        self.log = get_logger(__file__)
 
     def _request_auth(self):
         m = Message()
         m.add_byte(cMSG_SERVICE_REQUEST)
         m.add_string('ssh-userauth')
+        self.log.debug('sending userauth request')
         self.transport._send_message(m)
 
     def _disconnect_service_not_available(self):
@@ -21,6 +41,7 @@ class Auth(object):
         m.add_int(DISCONNECT_SERVICE_NOT_AVAILABLE)
         m.add_string('Service not available')
         m.add_string('en')
+        self.log.debug('sending disconnect due to service not available')
         self.transport._send_message(m)
         self.transport.close()
 
@@ -30,6 +51,7 @@ class Auth(object):
         m.add_int(DISCONNECT_NO_MORE_AUTH_METHODS_AVAILABLE)
         m.add_string('No more auth methods available')
         m.add_string('en')
+        self.log.debug('sending disconnect due to no more auth')
         self.transport._send_message(m)
         self.transport.close()
 
@@ -69,7 +91,7 @@ class Auth(object):
         self._disconnect_service_not_available()
 
     def _auth_msg(self, m):
-        raise SSHException('Unknown auth method "%s"' % self.auth_method)
+        raise SSHException('Unknown auth method "%s"' % self.METHOD)
 
     def _send_userauth_request(self):
         self.transport._log(DEBUG, 'userauth is OK')
@@ -133,7 +155,7 @@ class Auth(object):
         return
         
     def _parse_userauth_success(self, m):
-        self.transport._log(INFO, 'Authentication (%s) successful!' % self.auth_method)
+        self.transport._log(INFO, 'Authentication (%s) successful!' % self.METHOD)
         self.authenticated = True
         self.transport._auth_trigger()
         if self.auth_event is not None:
@@ -146,14 +168,13 @@ class Auth(object):
             self.transport._log(INFO, 'Authentication continues...')
             self.transport._log(DEBUG, 'Methods: ' + str(authlist))
             self.transport.saved_exception = PartialAuthentication(authlist)
-        elif self.auth_method not in authlist:
-            self.transport._log(DEBUG, 'Authentication type (%s) not permitted.' % self.auth_method)
+        elif self.METHOD not in authlist:
+            self.transport._log(DEBUG, 'Authentication type (%s) not permitted.' % self.METHOD)
             self.transport._log(DEBUG, 'Allowed methods: ' + str(authlist))
             self.transport.saved_exception = BadAuthenticationType('Bad authentication type', authlist)
         else:
-            self.transport._log(INFO, 'Authentication (%s) failed.' % self.auth_method)
+            self.transport._log(INFO, 'Authentication (%s) failed.' % self.METHOD)
         self.authenticated = False
-        self.username = None
         if self.auth_event is not None:
             self.auth_event.set()
 
@@ -164,51 +185,39 @@ class Auth(object):
         self.transport._log(INFO, 'Auth banner: %s' % banner)
     
     def _parse_userauth_info_request(self, m):
-        if self.auth_method != 'keyboard-interactive':
-            raise SSHException('Illegal info request from server')
-        title = m.get_text()
-        instructions = m.get_text()
-        m.get_binary()  # lang
-        prompts = m.get_int()
-        prompt_list = []
-        for i in range(prompts):
-            prompt_list.append((m.get_text(), m.get_boolean()))
-        response_list = self.interactive_handler(title, instructions, prompt_list)
-        
-        m = Message()
-        m.add_byte(cMSG_USERAUTH_INFO_RESPONSE)
-        m.add_int(len(response_list))
-        for r in response_list:
-            m.add_string(r)
-        self.transport._send_message(m)
+        raise SSHException('Illegal info request from server')
     
     def _parse_userauth_info_response(self, m):
-        if not self.transport.server_mode:
-            raise SSHException('Illegal info response from server')
-        n = m.get_int()
-        responses = []
-        for i in range(n):
-            responses.append(m.get_text())
-        result = self.transport.server_object.check_auth_interactive_response(responses)
-        if isinstance(type(result), InteractiveQuery):
-            # make interactive query instead of response
-            self._interactive_query(result)
-            return
-        self._send_auth_result(self.auth_username, 'keyboard-interactive', result)
+        raise SSHException('Illegal info response from server')
 
-    handler_table = {
-        MSG_SERVICE_REQUEST: _parse_service_request,
-        MSG_SERVICE_ACCEPT: _parse_service_accept,
-        MSG_USERAUTH_REQUEST: _parse_userauth_request,
-        MSG_USERAUTH_SUCCESS: _parse_userauth_success,
-        MSG_USERAUTH_FAILURE: _parse_userauth_failure,
-        MSG_USERAUTH_BANNER: _parse_userauth_banner,
-        MSG_USERAUTH_INFO_REQUEST: _parse_userauth_info_request,
-        MSG_USERAUTH_INFO_RESPONSE: _parse_userauth_info_response,
-    }
+
+    def handler_lookup(self, message_type):
+        if message_type == MSG_SERVICE_REQUEST:
+            return self._parse_service_request
+        elif message_type == MSG_SERVICE_ACCEPT: 
+            return self._parse_service_accept
+        elif message_type == MSG_USERAUTH_REQUEST: 
+            return self._parse_userauth_request
+        elif message_type == MSG_USERAUTH_SUCCESS:
+            return self._parse_userauth_success
+        elif message_type == MSG_USERAUTH_FAILURE:
+            return self._parse_userauth_failure
+        elif message_type == MSG_USERAUTH_BANNER: 
+            return self._parse_userauth_banner
+        elif message_type == MSG_USERAUTH_INFO_REQUEST: 
+            return self._parse_userauth_info_request
+        elif message_type == MSG_USERAUTH_INFO_RESPONSE: 
+            return self._parse_userauth_info_response
+        else:
+            raise KeyError(message_type)
+
+    def abort(self):
+        if self.auth_event is not None:
+            self.auth_event.set()
 
     def authorize(self, transport, event=None):
         self.transport = weakref.proxy(transport)
+        self.transport.auth_handler = self
         if (not self.transport.active) or (not self.transport.initial_kex_done):
             # we should never try to authenticate unless we're on a secure link
             raise SSHException('No existing session')
@@ -238,15 +247,13 @@ class PasswordAuth(Auth):
         password = bytestring(self.password)
         m.add_string(password)
 
-    def _handle_userauth(self, m):
-
 
     def authorize(self, transport, event=None):
         try:
             return super(PasswordAuth, self).authorize(transport, event)
         except BadAuthenticationType as e:
             # if password auth isn't allowed, but keyboard-interactive *is*, try to fudge it
-            if if self.fallback or 'keyboard-interactive' not in e.allowed_types:
+            if self.fallback or 'keyboard-interactive' not in e.allowed_types:
                 raise
             try:
                 auth = InteractiveAuth.from_password(self.username, self.password)
@@ -261,7 +268,7 @@ class PkeyAuth(Auth):
     def __init__(self, username, pkey, password=None):
         super(PkeyAuth, self).__init__()
         self.username = username
-        self.pkey = pkey
+        self.private_key = pkey
         self.password = password
 
     def _logmsg(self, log):
@@ -288,7 +295,7 @@ class NoAuth(Auth):
 
 class InteractiveAuth(Auth):
     METHOD = 'keyboard-interactive'
-    def __init__(self, username, handler, submethods):
+    def __init__(self, username, handler, submethods=''):
         super(InteractiveAuth, self).__init__()
         self.username = username
         self.handler = handler
@@ -296,6 +303,23 @@ class InteractiveAuth(Auth):
 
     def authorize(self, transport, event=None):
         return super(InteractiveAuth, self).authorize(transport, None)
+
+    def _parse_userauth_info_request(self, m):
+        title = m.get_text()
+        instructions = m.get_text()
+        m.get_binary()  # lang
+        prompts = m.get_int()
+        prompt_list = []
+        for i in range(prompts):
+            prompt_list.append((m.get_text(), m.get_boolean()))
+        response_list = self.handler(title, instructions, prompt_list)
+        
+        m = Message()
+        m.add_byte(cMSG_USERAUTH_INFO_RESPONSE)
+        m.add_int(len(response_list))
+        for r in response_list:
+            m.add_string(r)
+        self.transport._send_message(m)
 
     @classmethod
     def from_password(cls, username, password):
@@ -308,8 +332,8 @@ class InteractiveAuth(Auth):
                         # to try to fake out automated scripting of the exact
                         # type we're doing here.  *shrug* :)
                         return []
-                    return [self.password]
-        return cls(username, password)
+                    return [password]
+        return cls(username, handler)
 
     def _auth_msg(self, m):
         m.add_string('')
@@ -317,16 +341,18 @@ class InteractiveAuth(Auth):
 
 
 class PasswordAuthList(PasswordAuth):
-    def __init__(self, atttempts):
+    def __init__(self, attempts):
         self.attempts = attempts
     
-    def authorize(self, transport, event=None, fallback=False):
-        for username, password in attempts:
-            if fallback:
 
 
 class ServerAuth(Auth):
-    handler_table = copy.copy(Auth.handler_table)
+    def __init__(self, transport):
+        super(ServerAuth, self).__init__()
+        self.transport = transport
+        self.username = None
+        self.auth_fail_count = 0
+
     def _parse_service_request(self, m):
         service = m.get_text()
         if service == 'ssh-userauth':
@@ -414,6 +440,18 @@ class ServerAuth(Auth):
                 return
             return result
 
+    def _parse_userauth_info_response(self, m):
+        n = m.get_int()
+        responses = []
+        for i in range(n):
+            responses.append(m.get_text())
+        result = self.transport.server_object.check_auth_interactive_response(responses)
+        if isinstance(type(result), InteractiveQuery):
+            # make interactive query instead of response
+            self._interactive_query(result)
+            return
+        self._send_auth_result(self.username, 'keyboard-interactive', result)
+
     def _parse_userauth_request(self, m):
         if self.authenticated:
             # ignore
@@ -426,11 +464,11 @@ class ServerAuth(Auth):
         if service != 'ssh-connection':
             self._disconnect_service_not_available()
             return
-        if (self.auth_username is not None) and (self.auth_username != username):
+        if (self.username is not None) and (self.username != username):
             self.transport._log(WARNING, 'Auth rejected because the client attempted to change username in mid-flight')
             self._disconnect_no_more_auth()
             return
-        self.auth_username = username
+        self.username = username
 
         if method == 'none':
             result = self.transport.server_object.check_auth_none(username)
