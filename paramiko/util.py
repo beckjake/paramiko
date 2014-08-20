@@ -31,9 +31,9 @@ import traceback
 import threading
 import logging
 
-from paramiko.common import DEBUG, zero_byte, xffffffff, max_byte
-from paramiko.py3compat import PY2, long, byte_ord, b, byte_chr
-from paramiko.config import SSHConfig
+from .common import DEBUG, zero_byte, xffffffff, max_byte
+from .py3compat import PY2, long, byte_ord, b, byte_chr
+from .config import SSHConfig
 
 
 def inflate_long(s, always_positive=False):
@@ -207,7 +207,7 @@ def lookup_ssh_host_config(hostname, config):
     """
     Provided only as a backward-compatible wrapper around `.SSHConfig`.
     """
-    return config.lookup(hostname)
+    return config.lookup(hostname, False)
 
 
 def mod_inverse(x, m):
