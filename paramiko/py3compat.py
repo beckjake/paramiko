@@ -20,6 +20,7 @@ if PY2:
     integer_types = (int, long)
     long = long
     input = raw_input
+    xrange = xrange
     decodebytes = base64.decodestring
     encodebytes = base64.encodestring
 
@@ -125,6 +126,7 @@ else:
     input = input
     decodebytes = base64.decodebytes
     encodebytes = base64.encodebytes
+    xrange = range
 
     def bytestring(s):
         return s

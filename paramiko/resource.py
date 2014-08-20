@@ -23,7 +23,7 @@ Resource manager.
 import weakref
 
 
-class ResourceManager (object):
+class _ResourceManager (object):
     """
     A registry of objects and resources that should be closed when those
     objects are deleted.
@@ -68,4 +68,4 @@ class ResourceManager (object):
 
 
 # singleton
-ResourceManager = ResourceManager()
+ResourceManager = _ResourceManager()

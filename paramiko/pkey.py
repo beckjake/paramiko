@@ -44,7 +44,7 @@ class PKey (object):
         'DES-EDE3-CBC': {'cipher': DES3, 'keysize': 24, 'blocksize': 8, 'mode': DES3.MODE_CBC},
     }
 
-    def __init__(self, msg=None, data=None):
+    def __init__(self, msg=None, data=None, filename=None, password=None, file_obj=None):
         """
         Create a new instance of this public key type.  If ``msg`` is given,
         the key's public part(s) will be filled in from the message.  If

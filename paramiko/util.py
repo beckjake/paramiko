@@ -32,7 +32,7 @@ import threading
 import logging
 
 from .common import DEBUG, zero_byte, xffffffff, max_byte
-from .py3compat import PY2, long, byte_ord, b, byte_chr
+from .py3compat import PY2, long, byte_ord, b, byte_chr, xrange
 from .config import SSHConfig
 
 
@@ -317,6 +317,6 @@ def constant_time_bytes_eq(a, b):
         return False
     res = 0
     # noinspection PyUnresolvedReferences
-    for i in (xrange if PY2 else range)(len(a)):
+    for i in xrange(len(a)):
         res |= byte_ord(a[i]) ^ byte_ord(b[i])
     return res == 0

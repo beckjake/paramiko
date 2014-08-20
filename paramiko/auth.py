@@ -16,7 +16,7 @@ from paramiko.py3compat import bytestring
 from paramiko.ssh_exception import SSHException, AuthenticationException, \
     BadAuthenticationType, PartialAuthentication
 from paramiko.server import InteractiveQuery
-from paramiko.util import get_logger
+from paramiko.util import get_logger, hexlify
 
 
 # base class, do not instantiate.
@@ -253,7 +253,7 @@ class PkeyAuth(Auth):
         self.password = password
 
     def _logmsg(self, log):
-        log(DEBUG, 'Trying SSH key %s' % hexlify(self.pkey.get_fingerprint()))
+        log(DEBUG, 'Trying SSH key %s' % hexlify(self.private_key.get_fingerprint()))
 
     def _auth_msg(self, m):
         m.add_boolean(True)
@@ -368,7 +368,7 @@ class ServerAuth(Auth):
         else:
             return self.transport.server_object.check_auth_password(username, password)
 
-    def _send_pkey_ok(self):
+    def _send_pkey_ok(self, keytype, keyblob):
         m = Message()
         m.add_byte(cMSG_USERAUTH_PK_OK)
         m.add_string(keytype)
@@ -404,7 +404,7 @@ class ServerAuth(Auth):
         if not sig_attached:
             # client wants to know if this key is acceptable, before it
             # signs anything...  send special "ok" message
-            self._send_pkey_ok()
+            self._send_pkey_ok(keytype, keyblob)
             return
         if not self._key_check(username, key, service, m):
             self.transport._log(INFO, 'Auth rejected: invalid signature')

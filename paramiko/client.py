@@ -29,7 +29,7 @@ import warnings
 
 from paramiko.agent import Agent
 from paramiko.auth import PkeyAuth, PasswordAuth, NoAuth, InteractiveAuth
-from paramiko.common import DEBUG
+from paramiko.common import DEBUG, WARNING
 from paramiko.dsskey import DSSKey
 from paramiko.hostkeys import HostKeys
 from paramiko.py3compat import string_types, raise_saved
@@ -83,6 +83,7 @@ def _add_keypath(keys, hashes, pkey_classes, filename, password=None):
         if phash not in hashes:
             hashes.add(phash)
             keys.append(pkey)
+            return pkey
 
 
 
@@ -293,7 +294,7 @@ class SSHClient (object):
             for key in self._agent.get_keys():
                 authorizers.append(PkeyAuth(username, key))
         except (EnvironmentError, SSHException) as e:
-            self._log(WARN, 'Error getting keys from agent', exc_info=True)
+            self._log(WARNING, 'Error getting keys from agent', exc_info=True)
         if pkeys:
             for pkey in pkeys:
                 authorizers.append(PkeyAuth(username, pkey))
@@ -498,8 +499,8 @@ class SSHClient (object):
             raise saved_exc
         raise SSHException('No authentication methods available')
 
-    def _log(self, level, msg):
-        self._transport._log(level, msg)
+    def _log(self, level, msg, *args, **kwargs):
+        self._transport._log(level, msg, *args, **kwargs)
 
 
 class MissingHostKeyPolicy (object):
