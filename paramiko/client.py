@@ -30,7 +30,6 @@ import warnings
 from paramiko.agent import Agent
 from paramiko.auth import PkeyAuth, PasswordAuth, NoAuth, InteractiveAuth
 from paramiko.common import DEBUG
-from paramiko.config import SSH_PORT, SSHConfig
 from paramiko.dsskey import DSSKey
 from paramiko.hostkeys import HostKeys
 from paramiko.py3compat import string_types, raise_saved
@@ -39,10 +38,11 @@ from paramiko.rsakey import RSAKey
 from paramiko.ssh_exception import SSHException, BadHostKeyException
 from paramiko.transport import Transport
 from paramiko.util import retry_on_signal
+from . import config
 
 
 
-def get_socket(hostname, port=SSH_PORT, timeout=None):
+def get_socket(hostname, port=config.SSH_PORT, timeout=None):
     """Get a connected object with the appropriate timeout.
 
     :param str hostname: the server to connect to
@@ -117,9 +117,9 @@ class SSHClient (object):
         self._policy = RejectPolicy()
         self._transport = None
         self._agent = None
-        self._config = SSHConfig()
+        self._config = config.SSHConfig()
         if get_config:
-            self.load_config(self.SSH_CONFIG_PATH)
+            self.load_config(config.SSH_CONFIG_PATH)
 
     def load_config(self, path):
         """Load the configuration from the paths listed in paths, in order.
@@ -263,7 +263,7 @@ class SSHClient (object):
             verified
         :raises SSHException: if the missing_host_key policy is violated
         """
-        if port == SSH_PORT:
+        if port == config.SSH_PORT:
             server_hostkey_name = hostname
         else:
             server_hostkey_name = "[%s]:%d" % (hostname, port)
@@ -294,15 +294,15 @@ class SSHClient (object):
                 authorizers.append(PkeyAuth(username, key))
         except (EnvironmentError, SSHException) as e:
             self._log(WARN, 'Error getting keys from agent', exc_info=True)
-        for pkey in pkeys:
-            authorizers.append(PkeyAuth(username, pkey))
+        if pkeys:
+            for pkey in pkeys:
+                authorizers.append(PkeyAuth(username, pkey))
         if password:
             authorizers.append(PasswordAuth(username, password))
         return authorizers
 
-    def _lookup_missing(self, hostname, port=None, username=None, password=None,
-                        pkeys=None, timeout=None, compress=None, sock=None,
-                        key_filenames=None):
+    def _lookup_missing(self, hostname, port, username, password, pkeys,
+                        timeout, compress, sock, key_filenames):
         """Look up unsupplied arguments in the config."""
         config = self._config.lookup(hostname, True)
         if port is None:
@@ -366,9 +366,9 @@ class SSHClient (object):
             a password to use for authentication or for unlocking a private key
         :param list pkeys:
             a list of .PKey - optional private keys to use for authentication
+        # not yet supported
         :param list key_filenames:
-            the list of filenames, of optional private key(s) to try for
-            authentication
+            the optional list of private key(s) to try for authentication
 
         :raises BadHostKeyException: if the server's host key could not be
             verified
@@ -378,16 +378,18 @@ class SSHClient (object):
         :raises socket.error: if a socket error occurred while connecting
         """
         password = kwargs.get('password')
+        pkeys = kwargs.get('pkeys')
+        key_filenames = kwargs.get('key_filenames')
         (username, pkeys,
-         sock, compression) = self._lookup_missing(hostname, port, username,
-                                                   password, pkeys, timeout,
-                                                   compression)
+         sock, compress) = self._lookup_missing(hostname, port, username,
+                                                password, pkeys, timeout,
+                                                compress, sock, key_filenames)
 
-        t = self._attach_transport(sock, compression)
+        t = self._attach_transport(sock, compress)
         self._key_check(hostname, port)
         
         if authorizers is None:
-            authorizers = self._default_authorizers(username, password, pkeys)
+            authorizers = self._default_authorizers(hostname, username, password, pkeys)
 
         self.auth(authorizers)
 
@@ -476,7 +478,7 @@ class SSHClient (object):
     def auth(self, authorizers):
         """Authorize through a list of methods
 
-        Each argument is a candidate Auth object. Authorize should 
+        Each argument is a candidate Auth object.
         """
         saved_exc = None
         allowed_types = None
