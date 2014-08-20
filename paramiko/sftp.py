@@ -124,7 +124,7 @@ class BaseSFTP (object):
         msg.add(*extension_pairs)
         self._send_packet(CMD_VERSION, msg)
         return version
-        
+
     def _log(self, level, msg, *args):
         self.logger.log(level, msg, *args)
 
@@ -154,7 +154,7 @@ class BaseSFTP (object):
                         break
             else:
                 x = self.sock.recv(n)
-                
+
             if len(x) == 0:
                 raise EOFError()
             out += x

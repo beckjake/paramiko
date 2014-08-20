@@ -1359,7 +1359,7 @@ class Transport (threading.Thread):
             self._expected_packet = tuple()
             if (ptype >= 30) and (ptype <= 39):
                 self.kex_engine.parse_next(ptype, m)
-                return True     
+                return True
 
     def _local_handler_lookups(self, ptype, m):
         """Look up local handler definitions. Return True if it was handled."""
@@ -1413,7 +1413,7 @@ class Transport (threading.Thread):
         yield self._local_handler_lookups
         yield self._channel_handler_lookups
         yield self._auth_handler_lookups
-    
+
     def _deactivate(self):
         """Clean up the thread before exiting."""
         _active_threads.remove(self)
@@ -1452,7 +1452,7 @@ class Transport (threading.Thread):
                     break
             else:
                 self._failed_lookups(ptype, m)
-            
+
     def _run(self):
         """Do all the hard stuff in communicate(), handle errors here.
         """
@@ -2072,23 +2072,22 @@ class ChannelMap (object):
     def put(self, chanid, chan):
         with self._lock:
             self._map[chanid] = chan
-        
+
     def get(self, chanid):
         with self._lock:
             return self._map.get(chanid, None)
-        
+
     def delete(self, chanid):
         with self._lock:
             try:
                 del self._map[chanid]
             except KeyError:
                 pass
-        
+
     def values(self):
         with self._lock:
             return list(self._map.values())
-        
+
     def __len__(self):
         with self._lock:
             return len(self._map)
-        

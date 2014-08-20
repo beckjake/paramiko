@@ -57,7 +57,7 @@ class BufferedFile (object):
 
     def __del__(self):
         self.close()
-        
+
     def __iter__(self):
         """
         Returns an iterator that can be used to iterate over the lines in this
@@ -154,12 +154,12 @@ class BufferedFile (object):
                 result += new_data
                 self._realpos += len(new_data)
                 self._pos += len(new_data)
-            return result 
+            return result
         if size <= len(self._rbuffer):
             result = self._rbuffer[:size]
             self._rbuffer = self._rbuffer[size:]
             self._pos += len(result)
-            return result 
+            return result
         while len(self._rbuffer) < size:
             read_size = size - len(self._rbuffer)
             if self._flags & self.FLAG_BUFFERED:
@@ -175,7 +175,7 @@ class BufferedFile (object):
         result = self._rbuffer[:size]
         self._rbuffer = self._rbuffer[size:]
         self._pos += len(result)
-        return result 
+        return result
 
     def readline(self, size=None):
         """
@@ -291,7 +291,7 @@ class BufferedFile (object):
             If a file is opened in append mode (``'a'`` or ``'a+'``), any seek
             operations will be undone at the next write (as the file position
             will move back to the end of the file).
-        
+
         :param int offset:
             position to move to within the file, relative to ``whence``.
         :param int whence:

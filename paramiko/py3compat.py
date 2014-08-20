@@ -111,7 +111,7 @@ if PY2:
     del _stub_exec
 
 else:
-    
+
 
     import collections
     import struct
@@ -177,7 +177,7 @@ else:
     next = next
 
     MAXSIZE = sys.maxsize       # NOQA
-    
+
     def raise_saved(exc_type, exc_value, exc_traceback):
         raise exc_value.with_traceback(exc_traceback)
 

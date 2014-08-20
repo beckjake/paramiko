@@ -44,13 +44,13 @@ class PosixPipe (object):
         self._set = False
         self._forever = False
         self._closed = False
-    
+
     def close(self):
         os.close(self._rfd)
         os.close(self._wfd)
         # used for unit tests:
         self._closed = True
-    
+
     def fileno(self):
         return self._rfd
 
@@ -59,13 +59,13 @@ class PosixPipe (object):
             return
         os.read(self._rfd, 1)
         self._set = False
-    
+
     def set(self):
         if self._set or self._closed:
             return
         self._set = True
         os.write(self._wfd, b'*')
-    
+
     def set_forever(self):
         self._forever = True
         self.set()
@@ -80,23 +80,23 @@ class WindowsPipe (object):
         serv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         serv.bind(('127.0.0.1', 0))
         serv.listen(1)
-    
+
         # need to save sockets in _rsock/_wsock so they don't get closed
         self._rsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._rsock.connect(('127.0.0.1', serv.getsockname()[1]))
-    
+
         self._wsock, addr = serv.accept()
         serv.close()
         self._set = False
         self._forever = False
         self._closed = False
-    
+
     def close(self):
         self._rsock.close()
         self._wsock.close()
         # used for unit tests:
         self._closed = True
-    
+
     def fileno(self):
         return self._rsock.fileno()
 
@@ -105,7 +105,7 @@ class WindowsPipe (object):
             return
         self._rsock.recv(1)
         self._set = False
-    
+
     def set (self):
         if self._set or self._closed:
             return
@@ -122,12 +122,12 @@ class OrPipe (object):
         self._set = False
         self._partner = None
         self._pipe = pipe
-    
+
     def set(self):
         self._set = True
         if not self._partner._set:
             self._pipe.set()
-    
+
     def clear(self):
         self._set = False
         if not self._partner._set:

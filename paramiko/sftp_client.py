@@ -61,7 +61,7 @@ b_slash = b'/'
 class SFTPClient(BaseSFTP):
     """
     SFTP client object.
-    
+
     Used to open an SFTP session across an open SSH `.Transport` and perform
     remote file operations.
     """
@@ -578,7 +578,7 @@ class SFTPClient(BaseSFTP):
 
         .. versionadded:: 1.4
         .. versionchanged:: 1.7.4
-            ``callback`` and rich attribute return value added.   
+            ``callback`` and rich attribute return value added.
         .. versionchanged:: 1.7.7
             ``confirm`` param added.
         """

@@ -83,7 +83,7 @@ def _add_keypath(keys, hashes, pkey_classes, filename, password=None):
         if phash not in hashes:
             hashes.add(phash)
             keys.append(pkey)
-    
+
 
 
 class SSHClient (object):
@@ -105,7 +105,7 @@ class SSHClient (object):
     """
     Transport = Transport
     KEY_CLASSES = (RSAKey, DSSKey)
-    
+
     def __init__(self, get_config=True):
         """
         Create a new SSHClient.
@@ -309,7 +309,7 @@ class SSHClient (object):
             port = config['port']
         if username is None:
             username = config.get('user', getpass.getuser())
-        
+
         if key_filenames is None:
             key_filenames = []
         key_filenames.extend(config.get('identityfile', []))
@@ -326,10 +326,10 @@ class SSHClient (object):
                 timeout = int(config['connecttimeout'])
             except (KeyError, ValueError):
                 pass
-        
+
         if compress is None:
             compress = config['compression']
-        
+
         if not sock:
             sock = get_socket(hostname, port, timeout)
 
@@ -387,7 +387,7 @@ class SSHClient (object):
 
         t = self._attach_transport(sock, compress)
         self._key_check(hostname, port)
-        
+
         if authorizers is None:
             authorizers = self._default_authorizers(hostname, username, password, pkeys)
 

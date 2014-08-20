@@ -21,11 +21,13 @@ from paramiko.util import get_logger
 
 # base class, do not instantiate.
 class Auth(object):
+    METHOD = None
     def __init__(self):
         self.transport = None
         self.auth_event = None
         self.authenticated = False
         self.banner = None
+        self.username = None
         self.log = get_logger(__file__)
 
     def _request_auth(self):
@@ -110,27 +112,6 @@ class Auth(object):
         else:
             self.transport._log(DEBUG, 'Service request "%s" accepted (?)' % service)
 
-    def _send_auth_result(self, username, method, result):
-        # okay, send result
-        m = Message()
-        if result == AUTH_SUCCESSFUL:
-            self.transport._log(INFO, 'Auth granted (%s).' % method)
-            m.add_byte(cMSG_USERAUTH_SUCCESS)
-            self.authenticated = True
-        else:
-            self.transport._log(INFO, 'Auth rejected (%s).' % method)
-            m.add_byte(cMSG_USERAUTH_FAILURE)
-            m.add_string(self.transport.server_object.get_allowed_auths(username))
-            if result == AUTH_PARTIALLY_SUCCESSFUL:
-                m.add_boolean(True)
-            else:
-                m.add_boolean(False)
-                self.auth_fail_count += 1
-        self.transport._send_message(m)
-        if self.auth_fail_count >= 10:
-            self._disconnect_no_more_auth()
-        if result == AUTH_SUCCESSFUL:
-            self.transport._auth_trigger()
 
     def _interactive_query(self, q):
         # make interactive query instead of response
@@ -153,7 +134,7 @@ class Auth(object):
         m.add_boolean(False)
         self.transport._send_message(m)
         return
-        
+
     def _parse_userauth_success(self, m):
         self.transport._log(INFO, 'Authentication (%s) successful!' % self.METHOD)
         self.authenticated = True
@@ -183,10 +164,10 @@ class Auth(object):
         self.banner = banner
         lang = m.get_string()
         self.transport._log(INFO, 'Auth banner: %s' % banner)
-    
+
     def _parse_userauth_info_request(self, m):
         raise SSHException('Illegal info request from server')
-    
+
     def _parse_userauth_info_response(self, m):
         raise SSHException('Illegal info response from server')
 
@@ -194,19 +175,19 @@ class Auth(object):
     def handler_lookup(self, message_type):
         if message_type == MSG_SERVICE_REQUEST:
             return self._parse_service_request
-        elif message_type == MSG_SERVICE_ACCEPT: 
+        elif message_type == MSG_SERVICE_ACCEPT:
             return self._parse_service_accept
-        elif message_type == MSG_USERAUTH_REQUEST: 
+        elif message_type == MSG_USERAUTH_REQUEST:
             return self._parse_userauth_request
         elif message_type == MSG_USERAUTH_SUCCESS:
             return self._parse_userauth_success
         elif message_type == MSG_USERAUTH_FAILURE:
             return self._parse_userauth_failure
-        elif message_type == MSG_USERAUTH_BANNER: 
+        elif message_type == MSG_USERAUTH_BANNER:
             return self._parse_userauth_banner
-        elif message_type == MSG_USERAUTH_INFO_REQUEST: 
+        elif message_type == MSG_USERAUTH_INFO_REQUEST:
             return self._parse_userauth_info_request
-        elif message_type == MSG_USERAUTH_INFO_RESPONSE: 
+        elif message_type == MSG_USERAUTH_INFO_RESPONSE:
             return self._parse_userauth_info_response
         else:
             raise KeyError(message_type)
@@ -222,10 +203,10 @@ class Auth(object):
             # we should never try to authenticate unless we're on a secure link
             raise SSHException('No existing session')
         self.auth_event = threading.Event() if event is None else event
-        
+
         with self.transport.lock:
             self._request_auth()
-        
+
         if event is None:
             return self.wait_for_response()
         else:
@@ -313,7 +294,7 @@ class InteractiveAuth(Auth):
         for i in range(prompts):
             prompt_list.append((m.get_text(), m.get_boolean()))
         response_list = self.handler(title, instructions, prompt_list)
-        
+
         m = Message()
         m.add_byte(cMSG_USERAUTH_INFO_RESPONSE)
         m.add_int(len(response_list))
@@ -343,7 +324,7 @@ class InteractiveAuth(Auth):
 class PasswordAuthList(PasswordAuth):
     def __init__(self, attempts):
         self.attempts = attempts
-    
+
 
 
 class ServerAuth(Auth):
@@ -430,6 +411,28 @@ class ServerAuth(Auth):
             return AUTH_FAILED
         return result
 
+    def _send_auth_result(self, username, method, result):
+        # okay, send result
+        m = Message()
+        if result == AUTH_SUCCESSFUL:
+            self.transport._log(INFO, 'Auth granted (%s).' % method)
+            m.add_byte(cMSG_USERAUTH_SUCCESS)
+            self.authenticated = True
+        else:
+            self.transport._log(INFO, 'Auth rejected (%s).' % method)
+            m.add_byte(cMSG_USERAUTH_FAILURE)
+            m.add_string(self.transport.server_object.get_allowed_auths(username))
+            if result == AUTH_PARTIALLY_SUCCESSFUL:
+                m.add_boolean(True)
+            else:
+                m.add_boolean(False)
+                self.auth_fail_count += 1
+        self.transport._send_message(m)
+        if self.auth_fail_count >= 10:
+            self._disconnect_no_more_auth()
+        if result == AUTH_SUCCESSFUL:
+            self.transport._auth_trigger()
+
     def _parse_auth_interactive(self, username, m):
             lang = m.get_string()
             submethods = m.get_string()
@@ -460,7 +463,7 @@ class ServerAuth(Auth):
         service = m.get_text()
         method = m.get_text()
         self.transport._log(DEBUG, 'Auth request (type=%s) service=%s, username=%s' % (method, service, username))
-        
+
         if service != 'ssh-connection':
             self._disconnect_service_not_available()
             return
@@ -473,7 +476,7 @@ class ServerAuth(Auth):
         if method == 'none':
             result = self.transport.server_object.check_auth_none(username)
         elif method == 'password':
-            result = self._parse_auth_password(username, m) 
+            result = self._parse_auth_password(username, m)
         elif method == 'publickey':
             result = self._parse_auth_pkey(username, service, m)
         elif method == 'keyboard-interactive':
