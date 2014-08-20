@@ -30,7 +30,6 @@ __license__ = "GNU Lesser General Public License (LGPL)"
 from . import util
 from .transport import SecurityOptions, Transport
 from .client import SSHClient, MissingHostKeyPolicy, AutoAddPolicy, RejectPolicy, WarningPolicy
-# #from .auth_handler import AuthHandler
 from .channel import Channel, ChannelFile
 from .ssh_exception import SSHException, PasswordRequiredException, \
     BadAuthenticationType, ChannelException, BadHostKeyException, \
