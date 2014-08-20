@@ -8,8 +8,8 @@ __all__ = ['PY2', 'string_types', 'integer_types', 'text_type', 'bytes_types', '
 PY2 = sys.version_info[0] < 3
 
 _PY2_RERAISE_STR ="""
-    def raise_saved(exc_type, exc_value, exc_traceback):
-        raise exc_type, exc_value, exc_traceback
+def raise_saved(exc_type, exc_value, exc_traceback):
+    raise exc_type, exc_value, exc_traceback
 """
 
 if PY2:
