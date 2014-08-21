@@ -12,6 +12,6 @@ class ParamikoTest(unittest.TestCase):
         assertFalse = unittest.TestCase.failIf
 
 
-def test_path(filename):
+def get_path(filename):
     return os.path.join(root_path, filename)
 

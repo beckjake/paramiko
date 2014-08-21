@@ -36,7 +36,7 @@ from paramiko.py3compat import PY2, b, u, StringIO
 from paramiko.common import o777, o600, o666, o644
 from tests.stub_sftp import StubServer, StubSFTPServer
 from tests.loop import LoopSocket
-from tests.util import test_path
+from tests.util import get_path
 import paramiko.util
 from paramiko.sftp_attr import SFTPAttributes
 
@@ -139,7 +139,7 @@ class SFTPTest (unittest.TestCase):
         tc = paramiko.Transport(sockc)
         ts = paramiko.Transport(socks)
 
-        host_key = paramiko.RSAKey.from_private_key_file(test_path('test_rsa.key'))
+        host_key = paramiko.RSAKey.from_private_key_file(get_path('test_rsa.key'))
         ts.add_server_key(host_key)
         event = threading.Event()
         server = StubServer()

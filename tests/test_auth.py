@@ -30,7 +30,7 @@ from paramiko import Transport, ServerInterface, RSAKey, DSSKey, \
 from paramiko import AUTH_FAILED, AUTH_PARTIALLY_SUCCESSFUL, AUTH_SUCCESSFUL
 from paramiko.py3compat import u
 from tests.loop import LoopSocket
-from tests.util import test_path
+from tests.util import get_path
 
 _pwd = u('\u2022')
 
@@ -38,7 +38,7 @@ _pwd = u('\u2022')
 class NullServer (ServerInterface):
     paranoid_did_password = False
     paranoid_did_public_key = False
-    paranoid_key = DSSKey.from_private_key_file(test_path('test_dss.key'))
+    paranoid_key = DSSKey.from_private_key_file(get_path('test_dss.key'))
 
     def get_allowed_auths(self, username):
         if username == 'slowdive':
@@ -83,13 +83,13 @@ class NullServer (ServerInterface):
                 return AUTH_SUCCESSFUL
             return AUTH_PARTIALLY_SUCCESSFUL
         return AUTH_FAILED
-    
+
     def check_auth_interactive(self, username, submethods):
         if username == 'commie':
             self.username = username
             return InteractiveQuery('password', 'Please enter a password.', ('Password', False))
         return AUTH_FAILED
-    
+
     def check_auth_interactive_response(self, responses):
         if self.username == 'commie':
             if (len(responses) == 1) and (responses[0] == 'cat'):
@@ -111,16 +111,16 @@ class AuthTest (unittest.TestCase):
         self.ts.close()
         self.socks.close()
         self.sockc.close()
-    
+
     def start_server(self):
-        host_key = RSAKey.from_private_key_file(test_path('test_rsa.key'))
+        host_key = RSAKey.from_private_key_file(get_path('test_rsa.key'))
         self.public_host_key = RSAKey(data=host_key.asbytes())
         self.ts.add_server_key(host_key)
         self.event = threading.Event()
         self.server = NullServer()
         self.assertTrue(not self.event.isSet())
         self.ts.start_server(self.event, self.server)
-    
+
     def verify_finished(self):
         self.event.wait(1.0)
         self.assertTrue(self.event.isSet())
@@ -156,7 +156,7 @@ class AuthTest (unittest.TestCase):
             self.assertTrue(issubclass(etype, AuthenticationException))
         self.tc.auth_password(username='slowdive', password='pygmalion')
         self.verify_finished()
-    
+
     def test_3_multipart_auth(self):
         """
         verify that multipart auth works.
@@ -165,7 +165,7 @@ class AuthTest (unittest.TestCase):
         self.tc.connect(hostkey=self.public_host_key)
         remain = self.tc.auth_password(username='paranoid', password='paranoid')
         self.assertEqual(['publickey'], remain)
-        key = DSSKey.from_private_key_file(test_path('test_dss.key'))
+        key = DSSKey.from_private_key_file(get_path('test_dss.key'))
         remain = self.tc.auth_publickey(username='paranoid', key=key)
         self.assertEqual([], remain)
         self.verify_finished()
@@ -187,7 +187,7 @@ class AuthTest (unittest.TestCase):
         self.assertEqual(self.got_prompts, [('Password', False)])
         self.assertEqual([], remain)
         self.verify_finished()
-        
+
     def test_5_interactive_auth_fallback(self):
         """
         verify that a password auth attempt will fallback to "interactive"
