@@ -37,7 +37,7 @@ from paramiko.resource import ResourceManager
 from paramiko.rsakey import RSAKey
 from paramiko.ssh_exception import SSHException, BadHostKeyException
 from paramiko.transport import Transport
-from paramiko.util import retry_on_signal
+from paramiko.util import retry_on_signal, get_logger
 from . import config
 
 
@@ -111,6 +111,7 @@ class SSHClient (object):
         """
         Create a new SSHClient.
         """
+        self.logger = get_logger('client')
         self._system_host_keys = HostKeys()
         self._host_keys = HostKeys()
         self._host_keys_filename = None
@@ -121,6 +122,13 @@ class SSHClient (object):
         self._config = config.SSHConfig()
         if get_config:
             self.load_config(config.SSH_CONFIG_PATH)
+
+    def _log(self, level, msg, *args, **kwargs):
+        if isinstance(msg, list):
+            for m in msg:
+                self.logger.log(level, m)
+        else:
+            self.logger.log(level, msg, *args, **kwargs)
 
     def load_config(self, path):
         """Load the configuration from the paths listed in paths, in order.
@@ -498,9 +506,6 @@ class SSHClient (object):
         if saved_exc:
             raise saved_exc
         raise SSHException('No authentication methods available')
-
-    def _log(self, level, msg, *args, **kwargs):
-        self._transport._log(level, msg, *args, **kwargs)
 
 
 class MissingHostKeyPolicy (object):
