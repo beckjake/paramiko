@@ -307,7 +307,7 @@ class HostKeyEntry:
 
         :param str line: a line from an OpenSSH known_hosts file
         """
-        log = get_logger('paramiko.hostkeys')
+        log = get_logger(__name__)
         fields = line.split(' ')
         if len(fields) < 3:
             # Bad number of fields

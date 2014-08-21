@@ -243,7 +243,7 @@ class Transport (threading.Thread):
         self.clear_to_send = threading.Event()
         self.clear_to_send_lock = threading.Lock()
         self.clear_to_send_timeout = 30.0
-        self.log_name = __file__
+        self.log_name = __name__
         self.logger = util.get_logger(self.log_name)
         self.packetizer.set_log(self.logger)
         self.auth_handler = None

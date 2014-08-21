@@ -28,7 +28,7 @@ class Auth(object):
         self.authenticated = False
         self.banner = None
         self.username = None
-        self.log = get_logger(__file__)
+        self.log = get_logger(__name__)
 
     def _request_auth(self):
         m = Message()

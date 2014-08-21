@@ -111,7 +111,8 @@ class SSHClient (object):
         """
         Create a new SSHClient.
         """
-        self.logger = get_logger('client')
+        self.log_name = __name__
+        self.logger = get_logger(self.log_name)
         self._system_host_keys = HostKeys()
         self._host_keys = HostKeys()
         self._host_keys_filename = None
