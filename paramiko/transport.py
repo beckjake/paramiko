@@ -450,7 +450,8 @@ class Transport (threading.Thread):
             pass
         return None
 
-    def load_server_moduli(filename=None):
+    @classmethod
+    def load_server_moduli(cls, filename=None):
         """
         (optional)
         Load a file of prime moduli for use in doing group-exchange key
@@ -475,21 +476,20 @@ class Transport (threading.Thread):
 
         .. note:: This has no effect when used in client mode.
         """
-        Transport._modulus_pack = ModulusPack()
+        cls._modulus_pack = ModulusPack()
         # places to look for the openssh "moduli" file
         file_list = ['/etc/ssh/moduli', '/usr/local/etc/moduli']
         if filename is not None:
             file_list.insert(0, filename)
         for fn in file_list:
             try:
-                Transport._modulus_pack.read_file(fn)
+                cls._modulus_pack.read_file(fn)
                 return True
             except IOError:
                 pass
         # none succeeded
-        Transport._modulus_pack = None
+        cls._modulus_pack = None
         return False
-    load_server_moduli = staticmethod(load_server_moduli)
 
     def close(self):
         """

@@ -125,7 +125,8 @@ class ECDSAKey (PKey):
         key = self.signing_key or self.verifying_key
         self._write_private_key('EC', file_obj, key.to_der(), password)
 
-    def generate(bits, progress_func=None):
+    @classmethod
+    def generate(cls, bits, progress_func=None):
         """
         Generate a new private RSA key.  This factory function can be used to
         generate a new host key or authentication key.
@@ -139,9 +140,8 @@ class ECDSAKey (PKey):
         @rtype: L{RSAKey}
         """
         signing_key = ECDSA.generate()
-        key = ECDSAKey(vals=(signing_key, signing_key.get_verifying_key()))
+        key = cls(vals=(signing_key, signing_key.get_verifying_key()))
         return key
-    generate = staticmethod(generate)
 
     ###  internals...
 

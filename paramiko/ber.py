@@ -89,16 +89,16 @@ class BER(object):
             # 1: boolean (00 false, otherwise true)
             raise BERException('Unknown ber encoding type %d (robey is lazy)' % ident)
 
-    def decode_sequence(data):
+    @classmethod
+    def decode_sequence(cls, data):
         out = []
-        ber = BER(data)
+        ber = cls(data)
         while True:
             x = ber.decode_next()
             if x is None:
                 break
             out.append(x)
         return out
-    decode_sequence = staticmethod(decode_sequence)
 
     def encode_tlv(self, ident, val):
         # no need to support ident > 31 here
@@ -125,9 +125,9 @@ class BER(object):
         else:
             raise BERException('Unknown type for encoding: %s' % repr(type(x)))
 
-    def encode_sequence(data):
-        ber = BER()
+    @classmethod
+    def encode_sequence(cls, data):
+        ber = cls()
         for item in data:
             ber.encode(item)
         return ber.asbytes()
-    encode_sequence = staticmethod(encode_sequence)

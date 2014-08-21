@@ -131,7 +131,8 @@ class RSAKey (PKey):
     def write_private_key(self, file_obj, password=None):
         self._write_private_key('RSA', file_obj, self._encode_key(), password)
 
-    def generate(bits, progress_func=None):
+    @classmethod
+    def generate(cls, bits, progress_func=None):
         """
         Generate a new private RSA key.  This factory function can be used to
         generate a new host key or authentication key.
@@ -143,12 +144,11 @@ class RSAKey (PKey):
         :return: new `.RSAKey` private key
         """
         rsa = RSA.generate(bits, os.urandom, progress_func)
-        key = RSAKey(vals=(rsa.e, rsa.n))
+        key = cls(vals=(rsa.e, rsa.n))
         key.d = rsa.d
         key.p = rsa.p
         key.q = rsa.q
         return key
-    generate = staticmethod(generate)
 
     ###  internals...
 

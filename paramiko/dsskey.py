@@ -154,7 +154,8 @@ class DSSKey (PKey):
     def write_private_key(self, file_obj, password=None):
         self._write_private_key('DSA', file_obj, self._encode_key(), password)
 
-    def generate(bits=1024, progress_func=None):
+    @classmethod
+    def generate(cls, bits=1024, progress_func=None):
         """
         Generate a new private DSS key.  This factory function can be used to
         generate a new host key or authentication key.
@@ -166,10 +167,9 @@ class DSSKey (PKey):
         :return: new `.DSSKey` private key
         """
         dsa = DSA.generate(bits, os.urandom, progress_func)
-        key = DSSKey(vals=(dsa.p, dsa.q, dsa.g, dsa.y))
+        key = cls(vals=(dsa.p, dsa.q, dsa.g, dsa.y))
         key.x = dsa.x
         return key
-    generate = staticmethod(generate)
 
     ###  internals...
 
