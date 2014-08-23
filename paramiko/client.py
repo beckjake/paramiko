@@ -343,7 +343,7 @@ class SSHClient (object):
         if not sock:
             sock = get_socket(hostname, port, timeout)
 
-        return (username, pkeys, sock, compress)
+        return (username, pkeys, sock, compress, port)
 
 
     def connect(self, hostname, port=None, username=None, authorizers=None, timeout=None, compress=False, sock=None, **kwargs):
@@ -390,8 +390,8 @@ class SSHClient (object):
         password = kwargs.get('password')
         pkeys = kwargs.get('pkeys')
         key_filenames = kwargs.get('key_filenames')
-        (username, pkeys,
-         sock, compress) = self._lookup_missing(hostname, port, username,
+        (username, pkeys, sock,
+         compress, port) = self._lookup_missing(hostname, port, username,
                                                 password, pkeys, timeout,
                                                 compress, sock, key_filenames)
 
