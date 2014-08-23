@@ -57,7 +57,8 @@ from paramiko.ecdsakey import ECDSAKey
 from paramiko.server import ServerInterface
 from paramiko.sftp_client import SFTPClient
 from paramiko.ssh_exception import (SSHException, BadAuthenticationType,
-                                    ChannelException, ProxyCommandFailure)
+                                    ChannelException, ProxyCommandFailure,
+                                    NoExistingSession)
 from paramiko.util import retry_on_signal
 
 from Crypto.Cipher import Blowfish, AES, DES3, ARC4
@@ -516,7 +517,7 @@ class Transport (threading.Thread):
         :return: public key (`.PKey`) of the remote server
         """
         if (not self.active) or (not self.initial_kex_done):
-            raise SSHException('No existing session')
+            raise NoExistingSession('No existing session')
         return self.host_key
 
     def is_active(self):
@@ -979,7 +980,7 @@ class Transport (threading.Thread):
         .. versionadded:: 1.5
         """
         if (not self.active) or (not self.initial_kex_done):
-            raise SSHException('No existing session')
+            raise NoExistingSession('No existing session')
         self.auth_handler = auth.NoAuth(username)
         return self.auth_handler.authorize(self)
 
@@ -1031,7 +1032,7 @@ class Transport (threading.Thread):
         """
         if (not self.active) or (not self.initial_kex_done):
             # we should never try to send the password unless we're on a secure link
-            raise SSHException('No existing session')
+            raise NoExistingSession('No existing session')
         self.auth_handler = auth.PasswordAuth(username, password, fallback=fallback)
         return self.auth_handler.authorize(self, event)
 
@@ -1070,7 +1071,7 @@ class Transport (threading.Thread):
         """
         if (not self.active) or (not self.initial_kex_done):
             # we should never try to authenticate unless we're on a secure link
-            raise SSHException('No existing session')
+            raise NoExistingSession('No existing session')
         self.auth_handler = auth.PkeyAuth(username, key)
         return self.auth_handler.authorize(self, event)
 

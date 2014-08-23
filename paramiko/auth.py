@@ -14,7 +14,7 @@ from paramiko.common import cMSG_SERVICE_REQUEST, cMSG_DISCONNECT, \
     MSG_USERAUTH_BANNER, MSG_USERAUTH_INFO_REQUEST, MSG_USERAUTH_INFO_RESPONSE
 from paramiko.py3compat import bytestring
 from paramiko.ssh_exception import SSHException, AuthenticationException, \
-    BadAuthenticationType, PartialAuthentication
+    BadAuthenticationType, PartialAuthentication, NoExistingSession
 from paramiko.server import InteractiveQuery
 from paramiko.util import get_logger, hexlify
 
@@ -201,7 +201,7 @@ class Auth(object):
         self.transport.auth_handler = self
         if (not self.transport.active) or (not self.transport.initial_kex_done):
             # we should never try to authenticate unless we're on a secure link
-            raise SSHException('No existing session')
+            raise NoExistingSession('No existing session')
         self.auth_event = threading.Event() if event is None else event
 
         with self.transport.lock:

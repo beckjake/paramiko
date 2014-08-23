@@ -35,7 +35,7 @@ from paramiko.hostkeys import HostKeys
 from paramiko.py3compat import string_types, raise_saved
 from paramiko.resource import ResourceManager
 from paramiko.rsakey import RSAKey
-from paramiko.ssh_exception import SSHException, BadHostKeyException
+from paramiko.ssh_exception import SSHException, BadHostKeyException, NoExistingSession
 from paramiko.transport import Transport
 from paramiko.util import retry_on_signal, get_logger
 from . import config
@@ -121,6 +121,8 @@ class SSHClient (object):
         self._transport = None
         self._agent = None
         self._config = config.SSHConfig()
+        self._socket_info = None
+        self._compress = False
         if get_config:
             self.load_config(config.SSH_CONFIG_PATH)
 
@@ -341,7 +343,9 @@ class SSHClient (object):
             compress = config['compression']
 
         if not sock:
-            sock = get_socket(hostname, port, timeout)
+            self._compress = compress
+            self._socket_info = (hostname, port, timeout)
+            sock = get_socket(*self._socket_info)
 
         return (username, pkeys, sock, compress, port)
 
@@ -395,7 +399,8 @@ class SSHClient (object):
                                                 password, pkeys, timeout,
                                                 compress, sock, key_filenames)
 
-        t = self._attach_transport(sock, compress)
+
+        self._attach_transport(sock, compress)
         self._key_check(hostname, port)
 
         if authorizers is None:
@@ -485,6 +490,26 @@ class SSHClient (object):
         """
         return self._transport
 
+    def _reconnect_session(self):
+        """Reconnect a lost session."""
+        if not self._socket_info:
+            raise SSHException('Could not reconnect session')
+        sock = get_socket(*self._socket_info)
+        self._attach_transport(sock, self._compress)
+
+    def _attempt_auth(self, authorizer):
+        """
+        Attempt to authenticate using a given authorizer. If the session has
+        been closed by the remote system, reconnect and try again.
+        """
+        try:
+            return authorizer.authorize(self._transport)
+        except NoExistingSession:
+            if self._socket_info:
+                self._reconnect_session()
+                return authorizer.authorize(self._transport)
+            raise
+
     def auth(self, authorizers):
         """Authorize through a list of methods
 
@@ -495,7 +520,7 @@ class SSHClient (object):
         for authorizer in authorizers:
             if allowed_types is None or authorizer.METHOD in allowed_types:
                 try:
-                    allowed_types = authorizer.authorize(self._transport)
+                    allowed_types = self._attempt_auth(authorizer)
                 except SSHException as e:
                     saved_exc = e
                 else:

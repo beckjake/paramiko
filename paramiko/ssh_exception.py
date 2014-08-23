@@ -129,3 +129,8 @@ class ProxyCommandFailure (SSHException):
         self.error = error
         # for unpickling
         self.args = (command, error, )
+
+class NoExistingSession(SSHException):
+    """
+    Error raised when a session does not exist.
+    """
