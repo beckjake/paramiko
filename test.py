@@ -149,7 +149,7 @@ def main():
     # TODO: make that not a problem, jeez
     for thread in threading.enumerate():
         if thread is not threading.currentThread():
-            thread.join(1)
+            thread.join(timeout=1)
     # Exit correctly
     if not result.wasSuccessful():
         sys.exit(1)
